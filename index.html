@@ -3,243 +3,576 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>인터랙티브 예산 분석기</title>
+    <title>아이젠하워 매트릭스 투두 앱</title>
+    
+    <!-- Tailwind CSS 로드 -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
+    
+    <!-- React 및 ReactDOM 로드 -->
+    <script src="https://unpkg.com/react@17/umd/react.development.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@17/umd/react-dom.development.js" crossorigin></script>
+    
+    <!-- Babel 로드 (JSX를 브라우저에서 직접 변환하기 위함) -->
+    <script src="https://unpkg.com/babel-standalone@6/babel.min.js"></script>
+
     <style>
-        body {
-            font-family: 'Noto Sans KR', sans-serif;
+        /* 커스텀 애니메이션 및 스크롤바 스타일 */
+        @keyframes fade-in-down {
+            0% {
+                opacity: 0;
+                transform: translateY(-20px);
+            }
+            100% {
+                opacity: 1;
+                transform: translateY(0);
+            }
         }
-        /* 스크롤바 스타일링 */
-        ::-webkit-scrollbar {
+        .animate-fade-in-down {
+            animation: fade-in-down 0.5s ease-out forwards;
+        }
+
+        @keyframes slide-in-out {
+            0% {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+            15%, 85% {
+                transform: translateX(0);
+                opacity: 1;
+            }
+            100% {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+        }
+        .animate-slide-in-out {
+            animation: slide-in-out 3s ease-in-out forwards;
+        }
+        
+        /* 스크롤바 스타일 */
+        .overflow-y-auto::-webkit-scrollbar {
             width: 8px;
         }
-        ::-webkit-scrollbar-track {
-            background: #f1f1f1;
+        .overflow-y-auto::-webkit-scrollbar-track {
+            background: rgba(0,0,0,0.05);
+            border-radius: 10px;
         }
-        ::-webkit-scrollbar-thumb {
-            background: #888;
-            border-radius: 4px;
+        .overflow-y-auto::-webkit-scrollbar-thumb {
+            background: rgba(0,0,0,0.2);
+            border-radius: 10px;
         }
-        ::-webkit-scrollbar-thumb:hover {
-            background: #555;
-        }
-        /* contenteditable 플레이스홀더 */
-        [contenteditable]:empty:before {
-            content: attr(placeholder);
-            color: #a0aec0;
-            pointer-events: none;
-            display: block; /* For Firefox */
+        .overflow-y-auto::-webkit-scrollbar-thumb:hover {
+            background: rgba(0,0,0,0.3);
         }
     </style>
 </head>
-<body class="bg-gray-50 text-gray-800">
+<body class="bg-gradient-to-br from-purple-100 via-blue-100 to-indigo-200">
+    
+    <!-- React 앱이 렌더링될 루트 요소 -->
+    <div id="root"></div>
 
-    <div class="container mx-auto p-4 sm:p-6 lg:p-8 max-w-7xl">
-        <!-- 페이지 헤더 -->
-        <header class="mb-8 text-center">
-            <h1 class="text-3xl sm:text-4xl font-bold text-gray-900">인터랙티브 예산 분석기</h1>
-            <p class="mt-2 text-lg text-gray-600">프로젝트 예산 항목을 관리하고 시각적으로 분석하세요.</p>
-        </header>
+    <!-- React 컴포넌트 코드 (Babel이 이 스크립트를 변환) -->
+    <script type="text/babel">
+        const { useState, useRef, useEffect } = React;
 
-        <div class="grid grid-cols-1 lg:grid-cols-5 gap-8">
+        const App = () => {
+          // --- 상태 관리 ---
+          const getFormattedDate = (date) => {
+            const year = date.getFullYear();
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const day = String(date.getDate()).padStart(2, '0');
+            return `${year}-${month}-${day}`;
+          };
+
+          const [allTodos, setAllTodos] = useState({});
+          const [selectedDate, setSelectedDate] = useState(getFormattedDate(new Date()));
+          const [newTodoText, setNewTodoText] = useState('');
+          const [newTodoImportance, setNewTodoImportance] = useState('important');
+          const [newTodoUrgency, setNewTodoUrgency] = useState('urgent');
+          const [copySuccessMessage, setCopySuccessMessage] = useState('');
+          const [errorMessage, setErrorMessage] = useState('');
+          const [editingTodoId, setEditingTodoId] = useState(null);
+          const [editingText, setEditingText] = useState('');
+          const fileInputRef = useRef(null);
+
+          const todos = allTodos[selectedDate] || [];
+
+          // --- 효과 (Hooks) ---
+          useEffect(() => {
+            try {
+              const storedTodos = localStorage.getItem('eisenhowerMatrixTodosHistory');
+              if (storedTodos) {
+                setAllTodos(JSON.parse(storedTodos));
+              }
+            } catch (error) {
+              console.error("로컬 스토리지에서 할 일을 불러오는데 실패했습니다.", error);
+              setAllTodos({});
+            }
+          }, []);
+
+          useEffect(() => {
+            try {
+              localStorage.setItem('eisenhowerMatrixTodosHistory', JSON.stringify(allTodos));
+            } catch (error) {
+              console.error("로컬 스토리지에 할 일을 저장하는데 실패했습니다.", error);
+            }
+          }, [allTodos]);
+
+          // --- 함수 ---
+          const showMessage = (setter, message, duration = 3000) => {
+            setter(message);
+            setTimeout(() => setter(''), duration);
+          };
+
+          const handleAddTodo = () => {
+            if (newTodoText.trim() === '') {
+              showMessage(setErrorMessage, '❌ 할 일 내용을 입력해주세요!');
+              return;
+            }
+            const newTodo = {
+              id: crypto.randomUUID(),
+              text: newTodoText.trim(),
+              importance: newTodoImportance,
+              urgency: newTodoUrgency,
+              completed: false,
+              createdAt: new Date().toISOString(),
+            };
+            const updatedTodosForDate = [...todos, newTodo].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+            setAllTodos(prev => ({ ...prev, [selectedDate]: updatedTodosForDate }));
             
-            <!-- 왼쪽: 입력 및 항목 리스트 -->
-            <div class="lg:col-span-2 bg-white p-6 rounded-2xl shadow-lg">
-                <h2 class="text-2xl font-semibold mb-4 border-b pb-3">예산 항목 관리</h2>
-                
-                <!-- 항목 추가 폼 -->
-                <div id="add-item-form" class="mb-6">
-                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div>
-                            <label for="item-name" class="block text-sm font-medium text-gray-700 mb-1">항목명</label>
-                            <input type="text" id="item-name" placeholder="예: 미술팀 인건비" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition">
-                        </div>
-                        <div>
-                            <label for="item-cost" class="block text-sm font-medium text-gray-700 mb-1">비용 (원)</label>
-                            <input type="number" id="item-cost" placeholder="예: 2000000" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition">
-                        </div>
-                    </div>
-                    <button id="add-item-btn" class="mt-4 w-full bg-blue-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-transform transform hover:scale-105">
-                        항목 추가
-                    </button>
-                </div>
+            setNewTodoText('');
+            setNewTodoImportance('important');
+            setNewTodoUrgency('urgent');
+            showMessage(setCopySuccessMessage, '✅ 할 일이 추가되었습니다!');
+          };
 
-                <!-- 총 예산 표시 -->
-                <div class="bg-gray-100 p-4 rounded-lg mb-6">
-                    <h3 class="text-lg font-semibold text-gray-800">총 예산</h3>
-                    <p id="total-budget" class="text-2xl font-bold text-blue-600">0 원</p>
-                </div>
+          const handleKeyPress = (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              handleAddTodo();
+            }
+  };
+          
+          const updateTodosForCurrentDate = (updateFunction) => {
+            const updatedTodos = updateFunction(todos);
+            setAllTodos(prev => ({ ...prev, [selectedDate]: updatedTodos }));
+          };
 
-                <!-- 항목 리스트 -->
-                <div id="item-list-container" class="space-y-3 max-h-[400px] overflow-y-auto pr-2">
-                    <!-- 항목들이 여기에 동적으로 추가됩니다. -->
-                </div>
-            </div>
+          const handleDeleteTodo = (id) => {
+            updateTodosForCurrentDate(currentTodos => currentTodos.filter(todo => todo.id !== id));
+            showMessage(setCopySuccessMessage, '🗑️ 할 일이 삭제되었습니다.');
+          };
 
-            <!-- 오른쪽: 시각화 차트 -->
-            <div class="lg:col-span-3 bg-white p-6 rounded-2xl shadow-lg">
-                <h2 class="text-2xl font-semibold mb-4 border-b pb-3">예산 비중 분석</h2>
-                <div id="chart-container" class="w-full space-y-4">
-                    <!-- 차트가 여기에 동적으로 생성됩니다. -->
-                </div>
-            </div>
+          const handleToggleComplete = (id) => {
+            updateTodosForCurrentDate(currentTodos => 
+              currentTodos.map(todo => todo.id === id ? { ...todo, completed: !todo.completed } : todo)
+            );
+          };
 
-        </div>
-    </div>
+          const handleEditStart = (todo) => {
+            setEditingTodoId(todo.id);
+            setEditingText(todo.text);
+          };
 
-    <script>
-        // 초기 데이터 설정
-        let budgetItems = [
-            { id: 1, name: '작가 원고료', cost: 3600000 },
-            { id: 2, name: '5회차 참여 배우 2명 출연료', cost: 3000000 },
-            { id: 3, name: '촬영감독(A캠) 인건비', cost: 2250000 },
-            { id: 4, name: '촬영 B캠 인건비', cost: 2000000 },
-            { id: 5, name: '헤어/메이크업 인건비', cost: 1500000 },
-            { id: 6, name: '제작 PD 인건비', cost: 1500000 },
-            { id: 7, name: '예비비', cost: 1000000 },
-            { id: 8, name: '식대', cost: 1000000 },
-            { id: 9, name: '조연출 인건비', cost: 750000 },
-            { id: 10, name: '2회차 참여 배우 1명 출연료', cost: 600000 },
-        ];
+          const handleEditSave = (id) => {
+            if (editingText.trim() === '') {
+              showMessage(setErrorMessage, '❌ 할 일 내용을 입력해주세요!');
+              return;
+            }
+            updateTodosForCurrentDate(currentTodos =>
+              currentTodos.map(todo => todo.id === id ? { ...todo, text: editingText.trim() } : todo)
+            );
+            setEditingTodoId(null);
+            setEditingText('');
+            showMessage(setCopySuccessMessage, '💾 할 일이 수정되었습니다.');
+          };
 
-        // UI 요소 가져오기
-        const itemNameInput = document.getElementById('item-name');
-        const itemCostInput = document.getElementById('item-cost');
-        const addItemBtn = document.getElementById('add-item-btn');
-        const itemListContainer = document.getElementById('item-list-container');
-        const totalBudgetElement = document.getElementById('total-budget');
-        const chartContainer = document.getElementById('chart-container');
+          const handleEditCancel = () => {
+            setEditingTodoId(null);
+            setEditingText('');
+          };
+          
+          const handleKeyDown = (e, id) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              handleEditSave(id);
+            } else if (e.key === 'Escape') {
+              handleEditCancel();
+            }
+          };
 
-        // 숫자 포맷 함수 (세 자리마다 콤마)
-        const formatNumber = (num) => num.toLocaleString('ko-KR');
+          const exportToMarkdown = () => {
+            if (Object.keys(allTodos).length === 0) {
+              showMessage(setErrorMessage, '❌ 내보낼 데이터가 없습니다.');
+              return;
+            }
+            const jsonString = JSON.stringify(allTodos, null, 2);
+            const markdownContent = `# 할 일 히스토리 데이터\n\n\`\`\`json\n${jsonString}\n\`\`\``;
+            const blob = new Blob([markdownContent], { type: 'text/markdown;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `todo_history_${new Date().toISOString().split('T')[0]}.md`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            showMessage(setCopySuccessMessage, '✅ 전체 히스토리 파일이 다운로드되었습니다!');
+          };
 
-        // 전체 UI를 다시 그리는 함수
-        const render = () => {
-            // 1. 비용 기준으로 내림차순 정렬
-            budgetItems.sort((a, b) => b.cost - a.cost);
+          const importFromMarkdown = (event) => {
+            const file = event.target.files[0];
+            if (!file) return;
 
-            // 2. 총 예산 계산
-            const totalBudget = budgetItems.reduce((sum, item) => sum + item.cost, 0);
-            totalBudgetElement.textContent = `${formatNumber(totalBudget)} 원`;
-
-            // 3. 항목 리스트 렌더링
-            itemListContainer.innerHTML = '';
-            if (budgetItems.length === 0) {
-                itemListContainer.innerHTML = `<p class="text-gray-500 text-center py-4">항목이 없습니다. 새 항목을 추가해주세요.</p>`;
-            } else {
-                budgetItems.forEach((item, index) => {
-                    const percentage = totalBudget > 0 ? ((item.cost / totalBudget) * 100).toFixed(1) : 0;
-                    const itemElement = document.createElement('div');
-                    itemElement.className = 'p-3 bg-gray-50 rounded-lg flex items-center justify-between gap-2 hover:bg-gray-100 transition';
-                    itemElement.innerHTML = `
-                        <div class="flex items-center gap-3 flex-grow">
-                            <span class="font-bold text-blue-600 w-6 text-center">${index + 1}</span>
-                            <div class="flex-grow">
-                                <div contenteditable="true" placeholder="항목명" onblur="updateItem(${item.id}, 'name', this.textContent)" class="text-sm font-medium outline-none focus:bg-white px-1 rounded">${item.name}</div>
-                                <div class="flex items-baseline gap-2">
-                                    <span contenteditable="true" placeholder="비용" onblur="updateItem(${item.id}, 'cost', this.textContent)" class="text-gray-700 font-semibold outline-none focus:bg-white px-1 rounded">${formatNumber(item.cost)}</span>
-                                    <span class="text-xs text-gray-500">원</span>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="text-right flex-shrink-0">
-                            <div class="font-bold text-sm">${percentage}%</div>
-                            <button onclick="deleteItem(${item.id})" class="text-red-500 hover:text-red-700 text-xs mt-1">삭제</button>
-                        </div>
-                    `;
-                    itemListContainer.appendChild(itemElement);
-                });
+            if (!file.name.endsWith('.md')) {
+                showMessage(setErrorMessage, '❌ .md 형식의 마크다운 파일만 불러올 수 있습니다.');
+                event.target.value = '';
+                return;
             }
 
-            // 4. 차트 렌더링
-            chartContainer.innerHTML = '';
-            if (budgetItems.length === 0) {
-                chartContainer.innerHTML = `<div class="flex items-center justify-center h-full"><p class="text-gray-500">표시할 데이터가 없습니다.</p></div>`;
-            } else {
-                const maxCost = budgetItems.length > 0 ? budgetItems[0].cost : 0;
-                const colors = ['#3b82f6', '#60a5fa', '#93c5fd', '#bfdbfe', '#dbeafe'];
-                
-                budgetItems.forEach((item, index) => {
-                    const barWidth = maxCost > 0 ? (item.cost / maxCost) * 100 : 0;
-                    const percentage = totalBudget > 0 ? ((item.cost / totalBudget) * 100).toFixed(1) : 0;
-                    const color = colors[index % colors.length];
-
-                    const chartElement = document.createElement('div');
-                    chartElement.className = 'flex items-center gap-4';
-                    chartElement.innerHTML = `
-                        <div class="w-2/5 text-sm text-right truncate" title="${item.name}">${item.name}</div>
-                        <div class="w-3/5">
-                            <div class="w-full bg-gray-200 rounded-full h-6 relative">
-                                <div class="bg-blue-500 h-6 rounded-full text-white text-xs flex items-center justify-end pr-2" style="width: ${barWidth}%; background-color: ${color}; min-width: 40px;">
-                                    <span class="font-semibold">${percentage}%</span>
-                                </div>
-                            </div>
-                        </div>
-                    `;
-                    chartContainer.appendChild(chartElement);
-                });
-            }
-        };
-
-        // 항목 추가 함수
-        const addItem = () => {
-            const name = itemNameInput.value.trim();
-            const cost = parseInt(itemCostInput.value, 10);
-
-            if (name && !isNaN(cost) && cost > 0) {
-                const newItem = {
-                    id: Date.now(), // 고유 ID 생성
-                    name,
-                    cost
-                };
-                budgetItems.push(newItem);
-                
-                // 입력 필드 초기화
-                itemNameInput.value = '';
-                itemCostInput.value = '';
-                itemNameInput.focus();
-
-                render(); // UI 다시 그리기
-            } else {
-                alert('올바른 항목명과 비용을 입력해주세요.');
-            }
-        };
-
-        // 항목 삭제 함수
-        window.deleteItem = (id) => {
-            if (confirm('이 항목을 정말 삭제하시겠습니까?')) {
-                budgetItems = budgetItems.filter(item => item.id !== id);
-                render();
-            }
-        };
-
-        // 항목 수정 함수
-        window.updateItem = (id, field, value) => {
-            const item = budgetItems.find(item => item.id === id);
-            if (item) {
-                if (field === 'name') {
-                    item.name = value.trim();
-                } else if (field === 'cost') {
-                    const newCost = parseInt(value.replace(/,/g, ''), 10);
-                    if (!isNaN(newCost) && newCost >= 0) {
-                        item.cost = newCost;
-                    }
+            const reader = new FileReader();
+            reader.onload = (e) => {
+              const content = e.target.result;
+              try {
+                const jsonMatch = content.match(/```json\n([\s\S]*?)\n```/);
+                if (jsonMatch && jsonMatch[1]) {
+                  const importedData = JSON.parse(jsonMatch[1]);
+                  if (typeof importedData === 'object' && !Array.isArray(importedData)) {
+                    setAllTodos(importedData);
+                    showMessage(setCopySuccessMessage, '✅ 데이터를 성공적으로 불러왔습니다!');
+                  } else {
+                    showMessage(setErrorMessage, '❌ 불러온 데이터 형식이 올바르지 않습니다.');
+                  }
+                } else {
+                  showMessage(setErrorMessage, '❌ Markdown 파일에서 JSON 데이터를 찾을 수 없습니다.');
                 }
-                render();
+              } catch (error) {
+                console.error('Error parsing markdown or JSON:', error);
+                showMessage(setErrorMessage, '❌ 파일을 읽거나 파싱하는 중 오류가 발생했습니다.');
+              }
+            };
+            reader.readAsText(file);
+            event.target.value = '';
+          };
+
+          const copyToNotion = async () => {
+            if (todos.length === 0) {
+              showMessage(setErrorMessage, `❌ ${selectedDate}에 복사할 데이터가 없습니다.`);
+              return;
             }
+            let notionMarkdown = `# ✅ ${selectedDate} 할 일 목록\n\n`;
+            const categories = [
+              { imp: 'important', urg: 'urgent', title: 'A. 중요하고 긴급한 일' },
+              { imp: 'important', urg: 'not-urgent', title: 'B. 중요하지만 긴급하지 않은 일' },
+              { imp: 'not-important', urg: 'urgent', title: 'C. 중요하지 않지만 긴급한 일' },
+              { imp: 'not-important', urg: 'not-urgent', title: 'D. 중요하지도 긴급하지도 않은 일' },
+            ];
+
+            categories.forEach(category => {
+              const filteredTodos = todos.filter(
+                todo => todo.importance === category.imp && todo.urgency === category.urg
+              );
+              if (filteredTodos.length > 0) {
+                notionMarkdown += `## ${category.title}\n\n`;
+                filteredTodos.forEach(todo => {
+                  const checkbox = todo.completed ? '- [x]' : '- [ ]';
+                  const formattedText = todo.text.replace(/\n/g, '\n  ');
+                  notionMarkdown += `${checkbox} ${formattedText}\n\n`;
+                });
+                notionMarkdown += `---\n\n`;
+              }
+            });
+
+            try {
+              await navigator.clipboard.writeText(notionMarkdown);
+              showMessage(setCopySuccessMessage, '✅ 노션용 마크다운이 클립보드에 복사되었습니다!');
+            } catch (err) {
+              const textarea = document.createElement('textarea');
+              textarea.value = notionMarkdown;
+              textarea.style.position = 'fixed';
+              textarea.style.opacity = '0';
+              document.body.appendChild(textarea);
+              textarea.select();
+              try {
+                document.execCommand('copy');
+                showMessage(setCopySuccessMessage, '✅ 클립보드에 복사되었습니다! (폴백)');
+              } catch (copyErr) {
+                showMessage(setErrorMessage, '❌ 클립보드 복사에 실패했습니다.');
+                console.error('Fallback copy failed:', copyErr);
+              }
+              document.body.removeChild(textarea);
+            }
+          };
+
+          const handleDragStart = (e, id) => {
+            e.dataTransfer.setData('todoId', id);
+            e.currentTarget.classList.add('opacity-50');
+          };
+
+          const handleDragEnd = (e) => {
+            e.currentTarget.classList.remove('opacity-50');
+            document.querySelectorAll('.drop-target-highlight').forEach(el => {
+                el.classList.remove('border-blue-400', 'bg-blue-50', 'bg-opacity-20', 'drop-target-highlight');
+            });
+          };
+
+          const handleDragOver = (e) => {
+            e.preventDefault();
+            const dropTarget = e.currentTarget.querySelector('.drag-over-indicator');
+            if (dropTarget) {
+                document.querySelectorAll('.drop-target-highlight').forEach(el => {
+                    if (el !== dropTarget) {
+                        el.classList.remove('border-blue-400', 'bg-blue-50', 'bg-opacity-20', 'drop-target-highlight');
+                    }
+                });
+                dropTarget.classList.add('border-blue-400', 'bg-blue-50', 'bg-opacity-20', 'drop-target-highlight');
+            }
+          };
+          
+          const handleDragLeave = (e) => {
+            const dropTarget = e.currentTarget.querySelector('.drag-over-indicator');
+            if (dropTarget && !e.currentTarget.contains(e.relatedTarget)) {
+                dropTarget.classList.remove('border-blue-400', 'bg-blue-50', 'bg-opacity-20', 'drop-target-highlight');
+            }
+          };
+
+          const handleDrop = (e, targetImportance, targetUrgency) => {
+            e.preventDefault();
+            const todoId = e.dataTransfer.getData('todoId');
+            updateTodosForCurrentDate(currentTodos => 
+              currentTodos.map(todo =>
+                todo.id === todoId ? { ...todo, importance: targetImportance, urgency: targetUrgency } : todo
+              ).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+            );
+            
+            const dropTarget = e.currentTarget.querySelector('.drag-over-indicator');
+             if (dropTarget) {
+                dropTarget.classList.remove('border-blue-400', 'bg-blue-50', 'bg-opacity-20', 'drop-target-highlight');
+            }
+          };
+
+          const stats = {
+            total: todos.length,
+            completed: todos.filter(t => t.completed).length,
+            pending: todos.filter(t => !t.completed).length,
+            urgentAndImportant: todos.filter(t => t.importance === 'important' && t.urgency === 'urgent' && !t.completed).length,
+          };
+
+          const renderTodoSection = (importance, urgency, title, bgColor, icon) => {
+            const filteredTodos = todos.filter(todo =>
+              todo.importance === importance && todo.urgency === urgency
+            );
+            const completedCount = filteredTodos.filter(t => t.completed).length;
+            const totalCount = filteredTodos.length;
+
+            return (
+              <div
+                className={`relative p-4 sm:p-6 rounded-xl shadow-lg border-2 ${bgColor} transition-all duration-300 min-h-[200px] flex flex-col`}
+                onDragOver={handleDragOver}
+                onDrop={(e) => handleDrop(e, importance, urgency)}
+                onDragLeave={handleDragLeave}
+              >
+                <div className="drag-over-indicator absolute inset-0 border-4 border-dashed border-transparent rounded-xl transition-colors duration-200 pointer-events-none"></div>
+                <div className="relative z-10 flex flex-col flex-grow">
+                  <div className="flex items-center justify-between mb-3 sm:mb-4">
+                    <h3 className="text-lg sm:text-xl font-bold flex items-center gap-2">
+                      <span className="text-xl sm:text-2xl">{icon}</span>
+                      {title}
+                    </h3>
+                    <div className="text-xs sm:text-sm font-semibold px-2 py-1 sm:px-3 rounded-full bg-white bg-opacity-60 shadow-sm">
+                      {completedCount}/{totalCount}
+                    </div>
+                  </div>
+                  {totalCount > 0 && (
+                    <div className="w-full bg-white bg-opacity-40 rounded-full h-2 mb-3 sm:mb-4 shadow-inner">
+                      <div
+                        className="bg-green-500 h-2 rounded-full transition-all duration-500 ease-out"
+                        style={{ width: `${totalCount > 0 ? (completedCount / totalCount) * 100 : 0}%` }}
+                      ></div>
+                    </div>
+                  )}
+                  {filteredTodos.length === 0 ? (
+                    <div className="flex-grow flex flex-col items-center justify-center text-center py-8 opacity-70">
+                      <div className="text-3xl sm:text-4xl mb-2 opacity-50">📝</div>
+                      <p className="text-gray-600 font-medium text-sm sm:text-base">할 일이 없습니다</p>
+                      <p className="text-xs sm:text-sm text-gray-500 mt-1">새 할 일을 추가하거나 드래그하세요</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2 sm:space-y-3 overflow-y-auto flex-grow pr-1">
+                      {filteredTodos.map(todo => (
+                        <div
+                          key={todo.id}
+                          draggable={editingTodoId !== todo.id}
+                          onDragStart={(e) => handleDragStart(e, todo.id)}
+                          onDragEnd={handleDragEnd}
+                          className={`group bg-white bg-opacity-90 backdrop-blur-sm p-3 sm:p-4 rounded-lg shadow-md border border-white border-opacity-50 transition-all duration-200 ${editingTodoId === todo.id ? 'ring-2 ring-black shadow-xl' : 'cursor-grab active:cursor-grabbing'}`}
+                        >
+                          <div className="flex items-start gap-2 sm:gap-3">
+                            <input
+                              type="checkbox"
+                              checked={todo.completed}
+                              onChange={() => handleToggleComplete(todo.id)}
+                              className="mt-1 h-5 w-5 text-green-600 focus:ring-green-500 border-gray-300 rounded transition-colors duration-200 flex-shrink-0 cursor-pointer"
+                              aria-label={`Mark ${todo.text} as complete`}
+                            />
+                            <div className="flex-grow min-w-0">
+                              {editingTodoId === todo.id ? (
+                                <div className="space-y-2">
+                                  <textarea
+                                    value={editingText}
+                                    onChange={(e) => setEditingText(e.target.value)}
+                                    onKeyDown={(e) => handleKeyDown(e, todo.id)}
+                                    className="w-full px-3 py-2 border-2 border-gray-400 rounded-lg focus:outline-none focus:ring-2 focus:ring-black focus:border-transparent resize-none transition-colors duration-200 text-sm sm:text-base"
+                                    rows={Math.max(2, editingText.split('\n').length)}
+                                    placeholder="할 일 내용을 입력하세요..."
+                                    autoFocus
+                                  />
+                                  <div className="flex gap-2">
+                                    <button onClick={() => handleEditSave(todo.id)} className="px-3 py-1 bg-green-500 text-white text-xs sm:text-sm rounded-md hover:bg-green-600 transition-colors duration-200 shadow hover:shadow-md">✓ 저장</button>
+                                    <button onClick={handleEditCancel} className="px-3 py-1 bg-gray-400 text-white text-xs sm:text-sm rounded-md hover:bg-gray-500 transition-colors duration-200 shadow hover:shadow-md">✗ 취소</button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div
+                                  onDoubleClick={() => handleEditStart(todo)}
+                                  className={`text-gray-800 cursor-pointer whitespace-pre-wrap break-words leading-relaxed text-sm sm:text-base ${todo.completed ? 'line-through text-gray-400 italic' : ''} group-hover:bg-gray-50 group-hover:bg-opacity-50 p-1 rounded transition-colors duration-200`}
+                                  title="더블클릭하여 수정"
+                                >
+                                  {todo.text}
+                                </div>
+                              )}
+                            </div>
+                            {editingTodoId !== todo.id && (
+                              <div className="flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                                <button onClick={() => handleDeleteTodo(todo.id)} className="text-red-500 hover:text-red-700 hover:bg-red-100 p-1 rounded-full transition-colors duration-200" title="삭제" aria-label={`Delete ${todo.text}`}>
+                                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12.56 0c1.153 0 2.243.096 3.222.261m3.222.261L12 5.291M11.355 5.791L8.084 19.673m0 0M5.25 5.291M5.25 5.291L3.379 1.71a1.5 1.5 0 0 0-2.806.002L.001 5.291m5.25 0H1.971" />
+                                  </svg>
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          };
+
+          return (
+            <div className="font-sans text-gray-800 selection:bg-purple-300 selection:text-purple-900">
+              <div className="max-w-5xl mx-auto p-3 sm:p-6 lg:p-8">
+                <header className="text-center mb-6 sm:mb-10">
+                  <h1 className="text-4xl sm:text-5xl font-extrabold bg-gradient-to-r from-purple-600 via-blue-500 to-teal-500 bg-clip-text text-transparent mb-3 sm:mb-4 animate-fade-in-down">
+                    ✨ 아이젠하워 매트릭스
+                  </h1>
+                  <p className="text-gray-600 text-base sm:text-lg">중요도와 긴급도로 할 일을 효율적으로 관리하세요</p>
+                  
+                  <div className="mt-6 sm:mt-8 flex flex-col items-center gap-4">
+                    <label htmlFor="date-picker" className="font-semibold text-gray-700">날짜 선택:</label>
+                    <input
+                      type="date"
+                      id="date-picker"
+                      value={selectedDate}
+                      onChange={(e) => setSelectedDate(e.target.value)}
+                      className="px-4 py-2 border-2 border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors"
+                    />
+                  </div>
+
+                  <div className="flex flex-wrap justify-center gap-2 sm:gap-4 mt-4 sm:mt-6">
+                    <div className="bg-white/70 backdrop-blur-sm rounded-full px-3 py-1.5 sm:px-4 sm:py-2 shadow-lg border border-white/50">
+                      <span className="text-xs sm:text-sm text-gray-700">총</span>
+                      <span className="ml-1.5 sm:ml-2 font-bold text-blue-600">{stats.total}</span>
+                    </div>
+                    <div className="bg-white/70 backdrop-blur-sm rounded-full px-3 py-1.5 sm:px-4 sm:py-2 shadow-lg border border-white/50">
+                      <span className="text-xs sm:text-sm text-gray-700">완료</span>
+                      <span className="ml-1.5 sm:ml-2 font-bold text-green-600">{stats.completed}</span>
+                    </div>
+                    <div className="bg-white/70 backdrop-blur-sm rounded-full px-3 py-1.5 sm:px-4 sm:py-2 shadow-lg border border-white/50">
+                      <span className="text-xs sm:text-sm text-gray-700">진행중</span>
+                      <span className="ml-1.5 sm:ml-2 font-bold text-orange-500">{stats.pending}</span>
+                    </div>
+                    <div className="bg-white/70 backdrop-blur-sm rounded-full px-3 py-1.5 sm:px-4 sm:py-2 shadow-lg border border-white/50">
+                      <span className="text-xs sm:text-sm text-gray-700">🔥 중요&긴급</span>
+                      <span className="ml-1.5 sm:ml-2 font-bold text-red-600">{stats.urgentAndImportant}</span>
+                    </div>
+                  </div>
+                </header>
+
+                <section className="bg-white/80 backdrop-blur-md p-4 sm:p-6 rounded-2xl shadow-xl border border-white/60 mb-6 sm:mb-10">
+                  <h2 className="text-xl sm:text-2xl font-bold text-gray-800 mb-4 sm:mb-6 text-center flex items-center justify-center gap-2">
+                    <span>➕</span> {selectedDate}에 새 할 일 추가
+                  </h2>
+                  <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 items-start">
+                    <textarea
+                      placeholder="할 일 내용을 입력하세요 (Shift+Enter로 줄바꿈, Enter로 추가)"
+                      value={newTodoText}
+                      onChange={(e) => setNewTodoText(e.target.value)}
+                      onKeyDown={handleKeyPress}
+                      className="flex-grow w-full sm:w-auto px-4 py-3 border-2 border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none transition-all duration-200 shadow-sm hover:shadow-md text-sm sm:text-base"
+                    />
+                    <div className="flex flex-col sm:flex-row gap-2 sm:gap-3 w-full sm:w-auto">
+                      <select value={newTodoImportance} onChange={(e) => setNewTodoImportance(e.target.value)} className="w-full sm:w-auto px-4 py-3 border-2 border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 shadow-sm hover:shadow-md text-sm sm:text-base">
+                        <option value="important">🔴 중요</option>
+                        <option value="not-important">⚪ 중요하지 않음</option>
+                      </select>
+                      <select value={newTodoUrgency} onChange={(e) => setNewTodoUrgency(e.target.value)} className="w-full sm:w-auto px-4 py-3 border-2 border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 shadow-sm hover:shadow-md text-sm sm:text-base">
+                        <option value="urgent">⚡ 긴급</option>
+                        <option value="not-urgent">🕐 긴급하지 않음</option>
+                      </select>
+                    </div>
+                  </div>
+                  <button onClick={handleAddTodo} className="w-full mt-4 bg-gradient-to-r from-blue-600 to-purple-600 text-white py-3 px-6 rounded-xl shadow-lg focus:outline-none focus:ring-4 focus:ring-purple-400 focus:ring-opacity-50 transition-all duration-300 font-semibold text-base sm:text-lg">
+                    ✨ 할 일 추가하기
+                  </button>
+                </section>
+
+                <main className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6 mb-6 sm:mb-10">
+                  {renderTodoSection('important', 'urgent', '중요하고 긴급한 일', 'bg-gradient-to-br from-red-200 to-red-300 border-red-400 text-red-900', '🔥')}
+                  {renderTodoSection('important', 'not-urgent', '중요하지만 긴급하지 않은 일', 'bg-gradient-to-br from-blue-200 to-blue-300 border-blue-400 text-blue-900', '💡')}
+                  {renderTodoSection('not-important', 'urgent', '긴급하지만 중요하지 않은 일', 'bg-gradient-to-br from-orange-200 to-orange-300 border-orange-400 text-orange-900', '🤝')}
+                  {renderTodoSection('not-important', 'not-urgent', '긴급하지도 중요하지도 않은 일', 'bg-gradient-to-br from-gray-200 to-gray-300 border-gray-400 text-gray-800', '🗑️')}
+                </main>
+
+                <footer className="bg-white/80 backdrop-blur-md p-4 sm:p-6 rounded-2xl shadow-xl border border-white/60">
+                  <h2 className="text-xl sm:text-2xl font-bold text-gray-800 mb-4 sm:mb-6 text-center flex items-center justify-center gap-2">
+                    <span>💾</span> 데이터 관리
+                  </h2>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 max-w-2xl mx-auto">
+                    <button onClick={exportToMarkdown} className="bg-gradient-to-r from-purple-500 to-indigo-600 text-white py-2.5 sm:py-3 px-4 sm:px-6 rounded-xl shadow-md focus:outline-none focus:ring-2 focus:ring-purple-400 focus:ring-offset-2 transition-all duration-300 font-semibold text-sm sm:text-base">📄 전체 내보내기</button>
+                    <input type="file" ref={fileInputRef} onChange={importFromMarkdown} accept=".md,text/markdown" className="hidden" aria-labelledby="import-button"/>
+                    <button id="import-button" onClick={() => fileInputRef.current && fileInputRef.current.click()} className="bg-gradient-to-r from-teal-500 to-cyan-600 text-white py-2.5 sm:py-3 px-4 sm:px-6 rounded-xl shadow-md focus:outline-none focus:ring-2 focus:ring-teal-400 focus:ring-offset-2 transition-all duration-300 font-semibold text-sm sm:text-base">📁 전체 불러오기</button>
+                    <button onClick={copyToNotion} className="bg-gradient-to-r from-sky-500 to-blue-600 text-white py-2.5 sm:py-3 px-4 sm:px-6 rounded-xl shadow-md focus:outline-none focus:ring-2 focus:ring-sky-400 focus:ring-offset-2 transition-all duration-300 font-semibold text-sm sm:text-base">📋 현재 날짜 복사</button>
+                  </div>
+                  <p className="text-center text-gray-600 text-xs sm:text-sm mt-4 sm:mt-6">
+                    💡 드래그해서 할 일을 다른 카테고리로 이동할 수 있습니다. 데이터는 브라우저에 자동으로 저장됩니다.
+                  </p>
+                  {(copySuccessMessage || errorMessage) && (
+                    <div className="fixed bottom-5 right-5 z-50">
+                        {copySuccessMessage && (
+                            <div className="mt-2 bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded-lg shadow-lg animate-slide-in-out" role="alert">
+                                <strong className="font-bold">성공! </strong>
+                                <span className="block sm:inline">{copySuccessMessage}</span>
+                            </div>
+                        )}
+                        {errorMessage && (
+                            <div className="mt-2 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-lg shadow-lg animate-slide-in-out" role="alert">
+                                <strong className="font-bold">오류! </strong>
+                                <span className="block sm:inline">{errorMessage}</span>
+                            </div>
+                        )}
+                    </div>
+                  )}
+                </footer>
+              </div>
+            </div>
+          );
         };
 
-        // 이벤트 리스너 연결
-        addItemBtn.addEventListener('click', addItem);
-        itemCostInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') {
-                addItem();
-            }
-        });
-
-        // 초기 렌더링 실행
-        render();
+        // React 앱을 #root 요소에 렌더링
+        ReactDOM.render(<App />, document.getElementById('root'));
     </script>
 
 </body>
