@@ -23,198 +23,183 @@
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
     </style>
 </head>
-<body>
+<body class="bg-gray-50">
     <div id="root"></div>
 
     <script type="text/babel" data-type="module">
         import React, { useState, useEffect, useRef, memo, useCallback } from 'react';
         import { createRoot } from 'react-dom/client';
-        import { 
-            CheckSquare, Square, Trash2, Copy, Plus, Clock, Play, Pause, RotateCcw, 
-            LayoutGrid, List as ListIcon, AlertCircle, Star, CheckCircle2, GripVertical, 
-            CornerDownRight, X, Pencil, Minus, Check 
+        import {
+            CheckSquare, Square, Trash2, Copy, Plus, Clock, Play, Pause, RotateCcw,
+            LayoutGrid, List as ListIcon, AlertCircle, Star, CheckCircle2, GripVertical,
+            CornerDownRight, X, Pencil, Minus, Check
         } from 'lucide-react';
 
-        // --- Hook: 부드러운 가속 스크롤 엔진 ---
-        const useSmoothScroll = () => {
-            const scrollState = useRef({
+        // ===================== 전역 부드러운 자동 스크롤 엔진 =====================
+        const useGlobalSmoothScroll = () => {
+            const state = useRef({
                 speed: 0,
-                container: null,
-                reqId: null
+                reqId: null,
+                container: null
             });
 
-            const stopScroll = useCallback(() => {
-                if (scrollState.current.reqId) {
-                    cancelAnimationFrame(scrollState.current.reqId);
-                    scrollState.current.reqId = null;
+            const tick = useCallback(() => {
+                if (state.current.container && Math.abs(state.current.speed) > 0.3) {
+                    state.current.container.scrollTop += state.current.speed;
+                    state.current.reqId = requestAnimationFrame(tick);
+                } else {
+                    state.current.speed = 0;
+                    state.current.reqId = null;
                 }
-                scrollState.current.speed = 0;
-                scrollState.current.container = null;
             }, []);
 
-            const tick = useCallback(() => {
-                const { container, speed } = scrollState.current;
-                if (container && speed !== 0) {
-                    container.scrollTop += speed;
-                    scrollState.current.reqId = requestAnimationFrame(tick);
-                } else {
-                    stopScroll();
-                }
-            }, [stopScroll]);
-
-            const updateScroll = useCallback((e, container) => {
+            const update = useCallback((e, container) => {
                 if (!container) return;
-                
-                const { top, bottom, height } = container.getBoundingClientRect();
+                const rect = container.getBoundingClientRect();
                 const mouseY = e.clientY;
-                const threshold = 100; // 감지 범위 확대 (부드러운 가속을 위해)
-                const maxSpeed = 20;   // 최대 속도
+                const edge = 90;        // 감지 영역
+                const maxSpeed = 28;
 
-                let newSpeed = 0;
-
-                // 위쪽 감지 (거리에 비례하여 속도 증가)
-                if (mouseY < top + threshold) {
-                    const intensity = Math.max(0, (top + threshold - mouseY) / threshold);
-                    newSpeed = -maxSpeed * intensity; // 위로 이동 (-)
-                } 
-                // 아래쪽 감지
-                else if (mouseY > bottom - threshold) {
-                    const intensity = Math.max(0, (mouseY - (bottom - threshold)) / threshold);
-                    newSpeed = maxSpeed * intensity; // 아래로 이동 (+)
+                let speed = 0;
+                if (mouseY < rect.top + edge) {
+                    speed = -maxSpeed * (1 - (mouseY - rect.top) / edge);
+                } else if (mouseY > rect.bottom - edge) {
+                    speed = maxSpeed * ((mouseY - (rect.bottom - edge)) / edge);
                 }
 
-                scrollState.current.container = container;
-                scrollState.current.speed = newSpeed;
+                state.current.speed = speed;
+                state.current.container = container;
 
-                if (newSpeed !== 0 && !scrollState.current.reqId) {
-                    scrollState.current.reqId = requestAnimationFrame(tick);
-                } else if (newSpeed === 0) {
-                    stopScroll();
+                if (speed !== 0 && !state.current.reqId) {
+                    state.current.reqId = requestAnimationFrame(tick);
                 }
-            }, [tick, stopScroll]);
+            }, [tick]);
 
-            return { updateScroll, stopScroll };
+            const stop = useCallback(() => {
+                if (state.current.reqId) cancelAnimationFrame(state.current.reqId);
+                state.current.speed = 0;
+                state.current.reqId = null;
+                state.current.container = null;
+            }, []);
+
+            useEffect(() => {
+                const cleanup = () => stop();
+                window.addEventListener('dragend', cleanup);
+                window.addEventListener('drop', cleanup);
+                return () => {
+                    window.removeEventListener('dragend', cleanup);
+                    window.removeEventListener('drop', cleanup);
+                };
+            }, [stop]);
+
+            return { updateScroll: update, stopScroll: stop };
         };
 
-        // --- Components ---
-
-        const TaskItem = memo(({ 
-            task, toggleTask, deleteTask, updateTask, toggleSubtask, deleteSubtask, updateSubtask, 
-            addSubtask, addingSubtaskTo, setAddingSubtaskTo, reorderSubtask, onDragStart, 
-            onDragOver, onDropTask, isDraggingSource, draggedType 
+        // ===================== TaskItem =====================
+        const TaskItem = memo(({
+            task, toggleTask, deleteTask, updateTask, toggleSubtask, deleteSubtask, updateSubtask,
+            addSubtask, addingSubtaskTo, setAddingSubtaskTo, reorderSubtask, onDragStart,
+            onDropTask, isDraggingSource, draggedType
         }) => {
             const [isEditing, setIsEditing] = useState(false);
             const [editText, setEditText] = useState(task.text);
-            const [dropPosition, setDropPosition] = useState(null); 
-            const inputRef = useRef(null);
-            const subtaskInputRef = useRef(null);
+            const [dropPosition, setDropPosition] = useState(null);
             const itemRef = useRef(null);
+            const inputRef = useRef(null);
+            const subInputRef = useRef(null);
 
-            const isAddingSubtask = addingSubtaskTo === task.id;
+            const isAdding = addingSubtaskTo === task.id;
 
-            useEffect(() => {
-                if (isEditing && inputRef.current) inputRef.current.focus();
-            }, [isEditing]);
+            useEffect(() => { if (isEditing) inputRef.current?.focus(); }, [isEditing]);
+            useEffect(() => { if (isAdding) subInputRef.current?.focus(); }, [isAdding]);
 
-            useEffect(() => {
-                if (isAddingSubtask && subtaskInputRef.current) subtaskInputRef.current.focus();
-            }, [isAddingSubtask]);
-
-            const startEditing = () => { setIsEditing(true); setEditText(task.text); };
-
-            const saveEdit = () => {
-                if (editText.trim()) updateTask(task.id, editText);
-                else setEditText(task.text); 
+            const save = () => {
+                if (editText.trim()) updateTask(task.id, editText.trim());
                 setIsEditing(false);
             };
 
-            const handleEditKeyDown = (e) => {
-                if (e.nativeEvent.isComposing) return;
-                if (e.key === 'Enter') saveEdit();
-                if (e.key === 'Escape') { setEditText(task.text); setIsEditing(false); }
-            };
-
-            const handleSubtaskSubmit = (e) => {
-                if (e.nativeEvent.isComposing) return;
-                if (e.key === 'Enter') {
-                    e.preventDefault();
-                    const text = e.target.value;
-                    if (text.trim()) {
-                        addSubtask(task.id, text);
-                        e.target.value = ''; 
-                    }
-                }
-            };
-
             const handleDragOver = (e) => {
-                e.preventDefault(); e.stopPropagation();
-                if (!itemRef.current || isDraggingSource || draggedType !== 'task') { setDropPosition(null); return; }
+                e.preventDefault();
+                if (isDraggingSource || draggedType !== 'task') return;
                 const rect = itemRef.current.getBoundingClientRect();
-                if (e.clientY < rect.top + rect.height / 2) setDropPosition('top');
-                else setDropPosition('bottom');
+                setDropPosition(e.clientY < rect.top + rect.height / 2 ? 'top' : 'bottom');
             };
-
-            const handleDragLeave = () => setDropPosition(null);
 
             const handleDrop = (e) => {
-                e.preventDefault(); e.stopPropagation(); setDropPosition(null);
+                e.stopPropagation();
+                setDropPosition(null);
                 if (draggedType === 'task') onDropTask(e, task, dropPosition);
             };
 
-            const onSubtaskDragStart = (e, subtaskId) => {
-                e.stopPropagation(); 
-                e.dataTransfer.setData("type", "subtask");
-                e.dataTransfer.setData("parentId", task.id);
-                e.dataTransfer.setData("subtaskId", subtaskId);
-                e.dataTransfer.effectAllowed = "move";
-                onDragStart(e, task.id, 'subtask'); 
+            const startSubtaskDrag = (e, subId) => {
+                e.stopPropagation();
+                e.dataTransfer.setData('type', 'subtask');
+                e.dataTransfer.setData('parentId', task.id.toString());
+                e.dataTransfer.setData('subtaskId', subId.toString());
+                onDragStart(e, task.id, 'subtask');
             };
 
-            const commonTextStyle = "text-[15px] font-medium leading-snug px-1 py-0.5 rounded border";
-
             return (
-                <div 
-                    ref={itemRef} draggable={!isEditing}
-                    onDragStart={(e) => onDragStart(e, task.id, 'task')} 
-                    onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={handleDrop}
-                    className={`group relative flex flex-col p-4 rounded-xl mb-3 transition-all duration-200 border border-transparent ${
-                        isDraggingSource ? 'opacity-40 bg-gray-100 border-dashed border-gray-300 scale-[0.98]' : 
-                        task.completed ? 'bg-gray-50/50 opacity-60' : 'bg-white hover:shadow-md shadow-sm hover:border-gray-100'
+                <div
+                    ref={itemRef}
+                    draggable={!isEditing}
+                    onDragStart={(e) => onDragStart(e, task.id, 'task')}
+                    onDragOver={handleDragOver}
+                    onDragLeave={() => setDropPosition(null)}
+                    onDrop={handleDrop}
+                    className={`group relative bg-white rounded-xl p-4 mb-3 shadow-sm border-2 transition-all ${
+                        isDraggingSource ? 'opacity-40 scale-95 border-dashed border-gray-400' :
+                        task.completed ? 'opacity-60 border-transparent' : 'hover:shadow-md border-transparent hover:border-gray-200'
                     }`}
                 >
-                    {dropPosition === 'top' && <div className="absolute -top-2 left-0 right-0 h-1 bg-indigo-500 rounded-full pointer-events-none z-50 shadow-sm ring-2 ring-white transition-all duration-200"></div>}
-                    {dropPosition === 'bottom' && <div className="absolute -bottom-2 left-0 right-0 h-1 bg-indigo-500 rounded-full pointer-events-none z-50 shadow-sm ring-2 ring-white transition-all duration-200"></div>}
+                    {/* 드롭 위치선 */}
+                    {dropPosition === 'top' && <div className="absolute -top-1 left-3 right-3 h-1.5 bg-indigo-500 rounded-full shadow-lg z-50"/>}
+                    {dropPosition === 'bottom' && <div className="absolute -bottom-1 left-3 right-3 h-1.5 bg-indigo-500 rounded-full shadow-lg z-50"/>}
 
-                    <div className="flex items-start gap-3.5 pointer-events-none"> 
-                        <div className="mt-1 text-gray-200 group-hover:text-gray-400 transition-colors cursor-grab active:cursor-grabbing shrink-0 pointer-events-auto">
-                            <GripVertical className="w-4 h-4" />
-                        </div>
-                        <button onClick={() => toggleTask(task.id, 'completed')} className="mt-0.5 shrink-0 transition-colors pointer-events-auto">
-                            {task.completed ? <CheckCircle2 className="w-5 h-5 text-gray-400" /> : <div className="w-5 h-5 rounded-full border-2 border-gray-300 hover:border-indigo-500 transition-colors" />}
+                    <div className="flex items-start gap-3">
+                        <div className="mt-1 cursor-grab active:cursor-grabbing text-gray-400"><GripVertical size={16}/></div>
+                        <button onClick={() => toggleTask(task.id, 'completed')}>
+                            {task.completed ? <CheckCircle2 size={20} className="text-gray-500"/> :
+                             <div className="w-5 h-5 rounded-full border-2 border-gray-300 hover:border-indigo-500"/>}
                         </button>
-                        <div className="flex-1 min-w-0 pointer-events-auto">
+
+                        <div className="flex-1 min-w-0">
                             {isEditing ? (
-                                <input ref={inputRef} type="text" value={editText} onChange={(e) => setEditText(e.target.value)} onBlur={saveEdit} onKeyDown={handleEditKeyDown} className={`w-full bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-100 text-gray-800 border-transparent ${commonTextStyle}`} />
+                                <input ref={inputRef} value={editText} onChange={e=>setEditText(e.target.value)}
+                                    onBlur={save} onKeyDown={e=>{if(e.key==='Enter')save(); if(e.key==='Escape')setIsEditing(false);}}
+                                    className="w-full px-2 py-1 border border-indigo-300 rounded font-medium"/>
                             ) : (
-                                <span onDoubleClick={startEditing} className={`block cursor-default border-transparent ${commonTextStyle} ${task.completed ? 'line-through text-gray-400' : 'text-gray-800'}`}>{task.text}</span>
+                                <span onDoubleClick={()=> {setIsEditing(true); setEditText(task.text);}}
+                                      className={`block ${task.completed?'line-through text-gray-500':'text-gray-800'}`}>
+                                    {task.text}
+                                </span>
                             )}
                         </div>
-                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 pointer-events-auto">
-                            <button onClick={() => setAddingSubtaskTo(task.id)} title="하위 항목 추가" className="p-1.5 text-gray-300 hover:text-indigo-500 hover:bg-indigo-50 rounded-md transition-colors"><CornerDownRight className="w-3.5 h-3.5" /></button>
-                            <button onClick={startEditing} title="수정 (더블클릭)" className="p-1.5 text-gray-300 hover:text-blue-500 hover:bg-blue-50 rounded-md transition-colors"><Pencil className="w-3.5 h-3.5" /></button>
-                            <button onClick={() => deleteTask(task.id)} title="삭제" className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-md transition-colors"><Trash2 className="w-3.5 h-3.5" /></button>
+
+                        <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button onClick={()=>setAddingSubtaskTo(task.id)} className="p-1.5 hover:bg-indigo-50 rounded"><CornerDownRight size={14}/></button>
+                            <button onClick={()=> {setIsEditing(true); setEditText(task.text);}} className="p-1.5 hover:bg-blue-50 rounded"><Pencil size={14}/></button>
+                            <button onClick={()=>deleteTask(task.id)} className="p-1.5 hover:bg-red-50 rounded"><Trash2 size={14} className="text-red-500"/></button>
                         </div>
                     </div>
 
-                    {(task.subtasks?.length > 0 || isAddingSubtask) && (
-                        <div className="mt-2 space-y-1 ml-[1.875rem]"> 
+                    {/* Subtasks */}
+                    {(task.subtasks?.length > 0 || isAdding) && (
+                        <div className="mt-4 ml-9 space-y-2">
                             {task.subtasks.map(st => (
-                                <SubtaskItem key={st.id} subtask={st} parentId={task.id} toggleSubtask={toggleSubtask} deleteSubtask={deleteSubtask} updateSubtask={updateSubtask} onDragStart={onSubtaskDragStart} onDrop={(e, pos) => reorderSubtask(task.id, parseInt(e.dataTransfer.getData("subtaskId")), st.id, pos)} draggedType={draggedType} />
+                                <SubtaskItem key={st.id} subtask={st} parentId={task.id}
+                                    toggleSubtask={toggleSubtask} deleteSubtask={deleteSubtask} updateSubtask={updateSubtask}
+                                    onDragStart={startSubtaskDrag}
+                                    onDrop={(e,pos)=>reorderSubtask(task.id, parseInt(e.dataTransfer.getData('subtaskId')), st.id, pos)}
+                                    draggedType={draggedType}/>
                             ))}
-                            {isAddingSubtask && (
-                                <div className="flex items-center gap-1 pl-1 py-1 animate-in fade-in slide-in-from-top-1 duration-200 bg-gray-50/50 rounded-lg">
-                                    <div className="w-5 flex justify-center"><CornerDownRight className="w-3.5 h-3.5 text-indigo-300" /></div>
-                                    <input ref={subtaskInputRef} type="text" onKeyDown={handleSubtaskSubmit} onBlur={() => setAddingSubtaskTo(null)} placeholder="하위 항목 입력..." className="flex-1 bg-transparent text-sm p-1 focus:outline-none text-gray-600 placeholder-gray-300 ime-mode-active" />
+                            {isAdding && (
+                                <div className="flex items-center gap-2 py-1">
+                                    <CornerDownRight size={14} className="text-indigo-400"/>
+                                    <input ref={subInputRef} type="text" placeholder="하위 작업..."
+                                        onKeyDown={e=>{if(e.key==='Enter' && e.target.value.trim()){addSubtask(task.id, e.target.value.trim()); e.target.value='';}}}
+                                        onBlur={()=>setAddingSubtaskTo(null)}
+                                        className="flex-1 px-2 py-1 text-sm border rounded"/>
                                 </div>
                             )}
                         </div>
@@ -223,306 +208,250 @@
             );
         });
 
+        // ===================== SubtaskItem =====================
         const SubtaskItem = memo(({ subtask, parentId, toggleSubtask, deleteSubtask, updateSubtask, onDragStart, onDrop, draggedType }) => {
-            const [isEditing, setIsEditing] = useState(false);
+            const [editing, setEditing] = useState(false);
             const [text, setText] = useState(subtask.text);
-            const [dropPosition, setDropPosition] = useState(null);
-            const inputRef = useRef(null);
-            const itemRef = useRef(null);
+            const [pos, setPos] = useState(null);
+            const ref = useRef(null);
 
-            useEffect(() => {
-                if (isEditing && inputRef.current) { inputRef.current.focus(); inputRef.current.setSelectionRange(text.length, text.length); }
-            }, [isEditing]);
-
-            const save = () => { if (text.trim()) updateSubtask(parentId, subtask.id, text); else setText(subtask.text); setIsEditing(false); };
-            const handleKeyDown = (e) => { if (e.nativeEvent.isComposing) return; if (e.key === 'Enter') save(); if (e.key === 'Escape') { setText(subtask.text); setIsEditing(false); } };
-            
-            const handleDragOver = (e) => {
-                e.preventDefault(); e.stopPropagation();
-                if (!itemRef.current || draggedType !== 'subtask') { setDropPosition(null); return; }
-                const rect = itemRef.current.getBoundingClientRect();
-                if (e.clientY < rect.top + rect.height / 2) setDropPosition('top'); else setDropPosition('bottom');
+            const handleDragOver = e => {
+                e.preventDefault();
+                if (draggedType !== 'subtask') return;
+                const r = ref.current.getBoundingClientRect();
+                setPos(e.clientY < r.top + r.height/2 ? 'top' : 'bottom');
             };
 
-            const handleDrop = (e) => { e.preventDefault(); e.stopPropagation(); setDropPosition(null); if (draggedType === 'subtask') onDrop(e, dropPosition); };
-
             return (
-                <div ref={itemRef} draggable={!isEditing} onDragStart={(e) => onDragStart(e, subtask.id)} onDragOver={handleDragOver} onDragLeave={() => setDropPosition(null)} onDrop={handleDrop} className={`flex items-start gap-1 group/sub px-2 py-1.5 rounded-lg cursor-grab active:cursor-grabbing relative transition-colors w-full ${isEditing ? 'bg-white ring-2 ring-indigo-100 shadow-sm z-10' : 'hover:bg-gray-100'}`}>
-                    {dropPosition === 'top' && <div className="absolute -top-0.5 left-0 right-0 h-0.5 bg-indigo-400 rounded-full pointer-events-none z-50"></div>}
-                    {dropPosition === 'bottom' && <div className="absolute -bottom-0.5 left-0 right-0 h-0.5 bg-indigo-400 rounded-full pointer-events-none z-50"></div>}
-                    <div className="mt-1 w-3 h-4 flex-shrink-0 flex items-center justify-center"><GripVertical className="w-3 h-3 text-gray-300 opacity-0 group-hover/sub:opacity-100 cursor-grab" /></div>
-                    <div className="mt-1 w-4 flex justify-center flex-shrink-0"><CornerDownRight className="w-3.5 h-3.5 text-gray-400" /></div>
-                    <button onClick={() => toggleSubtask(parentId, subtask.id)} className="mt-0.5 flex-shrink-0">{subtask.completed ? <CheckSquare className="w-4 h-4 text-gray-400" /> : <Square className="w-4 h-4 text-gray-300 hover:text-indigo-400" />}</button>
-                    <div className="flex-1 min-w-0 ml-1">
-                        {isEditing ? (
-                            <textarea ref={inputRef} value={text} onChange={e => setText(e.target.value)} onBlur={save} onKeyDown={handleKeyDown} rows={1} style={{ height: 'auto', minHeight: '24px' }} className="resize-none overflow-hidden text-sm focus:outline-none bg-transparent w-full block break-words whitespace-pre-wrap leading-relaxed" onInput={(e) => { e.target.style.height = 'auto'; e.target.style.height = e.target.scrollHeight + 'px'; }} />
-                        ) : (
-                            <span onDoubleClick={() => setIsEditing(true)} className={`cursor-default border-transparent text-sm block break-words whitespace-pre-wrap leading-relaxed ${subtask.completed ? 'line-through text-gray-400' : 'text-gray-600'}`}>{subtask.text}</span>
-                        )}
-                    </div>
-                    <button onClick={() => deleteSubtask(parentId, subtask.id)} className="opacity-0 group-hover/sub:opacity-100 text-gray-300 hover:text-red-400 ml-2 p-0.5 flex-shrink-0"><X className="w-3.5 h-3.5" /></button>
+                <div ref={ref} draggable={!editing}
+                    onDragStart={e => onDragStart(e, subtask.id)}
+                    onDragOver={handleDragOver}
+                    onDragLeave={()=>setPos(null)}
+                    onDrop={e=>{e.preventDefault(); onDrop(e,pos); setPos(null);}}
+                    className="flex items-center gap-2 py-1.5 px-2 rounded hover:bg-gray-100 relative">
+                    {pos && <div className={`absolute ${pos==='top'?'top-0':'bottom-0'} left-0 right-0 h-0.5 bg-indigo-500`}/>}
+                    <GripVertical size={14} className="text-gray-300"/>
+                    <CornerDownRight size={14} className="text-gray-400"/>
+                    <button onClick={()=>toggleSubtask(parentId, subtask.id)}>
+                        {subtask.completed ? <CheckSquare size={16} className="text-gray-500"/> : <Square size={16} className="text-gray-300"/>}
+                    </button>
+                    {editing ? (
+                        <input value={text} onChange={e=>setText(e.target.value)} autoFocus
+                               onBlur={()=>{if(text.trim())updateSubtask(parentId,subtask.id,text.trim()); setEditing(false);}}
+                               onKeyDown={e=>{if(e.key==='Enter') e.target.blur();}}
+                               className="flex-1 text-sm"/>
+                    ) : (
+                        <span onDoubleClick={()=> {setEditing(true); setText(subtask.text);}}
+                              className={`flex-1 text-sm ${subtask.completed?'line-through text-gray-500':'text-gray-700'}`}>
+                            {subtask.text}
+                        </span>
+                    )}
+                    <button onClick={()=>deleteSubtask(parentId, subtask.id)} className="opacity-0 hover:opacity-100"><X size={14} className="text-red-400"/></button>
                 </div>
             );
         });
 
-        const Quadrant = memo(({ 
-            id, title, description, tasks, headerColor, icon: Icon, targetUrgent, targetImportant,
-            toggleTask, deleteTask, updateTask, toggleSubtask, deleteSubtask, updateSubtask, addSubtask, reorderSubtask,
-            addingSubtaskTo, setAddingSubtaskTo, onDragStart, onDragOver, onDropTask, onDropQuadrant, draggedTaskId, draggedType,
-            updateScroll 
-        }) => {
-            const scrollRef = useRef(null);
-
-            // Quadrant 내부 스크롤 처리 (부드러운 버전)
-            const handleLocalDragOver = (e) => {
-                if (onDragOver) onDragOver(e); 
-                updateScroll(e, scrollRef.current); 
-            };
+        // ===================== Quadrant =====================
+        const Quadrant = memo(({ title, icon: Icon, color, tasks, targetUrgent, targetImportant, ...props }) => {
+            const ref = useRef(null);
+            const { updateScroll } = useGlobalSmoothScroll();
 
             return (
-                <div onDragOver={handleLocalDragOver} onDrop={(e) => onDropQuadrant(e, targetUrgent, targetImportant)} className="flex flex-col h-full bg-white rounded-3xl shadow-[0_2px_12px_-4px_rgba(0,0,0,0.05)] border border-gray-100 overflow-hidden hover:shadow-md transition-shadow duration-300">
-                    <div className="px-6 pt-6 pb-4">
-                        <div className="flex items-center justify-between mb-1">
-                            <div className="flex items-center gap-2.5">
-                                <div className={`p-2 rounded-xl ${headerColor} bg-opacity-10`}><Icon className={`w-4 h-4 ${headerColor.replace('bg-', 'text-')}`} /></div>
-                                <h3 className="font-bold text-gray-800 text-lg tracking-tight">{title}</h3>
-                            </div>
-                            <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-gray-50 text-gray-400">{tasks.length}</span>
+                <div onDragOver={e => { e.preventDefault(); updateScroll(e, ref.current); }}
+                     onDrop={e => props.onDropQuadrant(e, targetUrgent, targetImportant)}
+                     className="flex flex-col h-full bg-white rounded-3xl shadow-lg border border-gray-200 overflow-hidden">
+                    <div className="px-6 py-5 border-b border-gray-100 flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                            <div className={`p-2 rounded-lg ${color} bg-opacity-15`}><Icon className={`w-5 h-5 ${color.replace('bg-','text-')}`}/></div>
+                            <h3 className="font-bold text-lg">{title}</h3>
                         </div>
+                        <span className="text-xs font-bold px-2.5 py-1 bg-gray-100 rounded-full">{tasks.length}</span>
                     </div>
-                    <div 
-                        ref={scrollRef}
-                        className="flex-1 overflow-y-auto custom-scrollbar px-4 pb-4 min-h-[100px] bg-gray-50/30"
-                        style={{ overflowAnchor: 'none' }} 
-                    >
-                        {tasks.length === 0 ? (
-                            <div className="h-full flex flex-col items-center justify-center"><span className="text-gray-300 text-sm font-medium">비어있음</span></div>
-                        ) : (
-                            <div className="pt-2">
-                                {tasks.map(t => (
-                                    <TaskItem key={t.id} task={t} toggleTask={toggleTask} deleteTask={deleteTask} updateTask={updateTask} toggleSubtask={toggleSubtask} deleteSubtask={deleteSubtask} updateSubtask={updateSubtask} addSubtask={addSubtask} reorderSubtask={reorderSubtask} addingSubtaskTo={addingSubtaskTo} setAddingSubtaskTo={setAddingSubtaskTo} onDragStart={onDragStart} onDragOver={onDragOver} onDropTask={onDropTask} isDraggingSource={draggedTaskId === t.id} draggedType={draggedType} />
-                                ))}
-                            </div>
-                        )}
+                    <div ref={ref} className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-3">
+                        {tasks.length === 0 ? <p className="text-center text-gray-400 py-12">비어있음</p> :
+                         tasks.map(t => <TaskItem key={t.id} task={t} {...props} isDraggingSource={props.draggedTaskId===t.id}/>)}
                     </div>
                 </div>
             );
         });
 
+        // ===================== 메인 앱 =====================
         const FocusFlowApp = () => {
             const [tasks, setTasks] = useState(() => {
                 const saved = localStorage.getItem('focusflow_tasks');
-                const parsed = saved ? JSON.parse(saved) : [];
-                return parsed.map(t => ({ ...t, subtasks: t.subtasks || [] }));
+                return saved ? JSON.parse(saved).map(t=>({...t, subtasks: t.subtasks||[]})) : [];
             });
-            
-            const [inputValue, setInputValue] = useState('');
-            const [viewMode, setViewMode] = useState('matrix'); 
-            const [timerActive, setTimerActive] = useState(false);
-            const [timeLeft, setTimeLeft] = useState(25 * 60); 
-            const [activeTab, setActiveTab] = useState('all'); 
-            const [addingSubtaskTo, setAddingSubtaskTo] = useState(null);
-            const [draggedTaskId, setDraggedTaskId] = useState(null);
-            const [draggedType, setDraggedType] = useState(null);
-            const [isCopied, setIsCopied] = useState(false);
-            
-            const mainContainerRef = useRef(null);
-            const { updateScroll, stopScroll } = useSmoothScroll(); // 훅 사용
+            const [input, setInput] = useState('');
+            const [view, setView] = useState('matrix');
+            const [timerOn, setTimerOn] = useState(false);
+            const [seconds, setSeconds] = useState(25*60);
+            const [tab, setTab] = useState('all');
+            const [addingSub, setAddingSub] = useState(null);
+            const [draggedId, setDraggedId] = useState(null);
+            const [dragType, setDragType] = useState(null);
+            const [copied, setCopied] = useState(false);
+
+            const { updateScroll } = useGlobalSmoothScroll();
 
             useEffect(() => { localStorage.setItem('focusflow_tasks', JSON.stringify(tasks)); }, [tasks]);
-
             useEffect(() => {
-                let interval = null;
-                if (timerActive && timeLeft > 0) interval = setInterval(() => { setTimeLeft((prev) => prev - 1); }, 1000);
-                else if (timeLeft === 0) setTimerActive(false);
-                return () => clearInterval(interval);
-            }, [timerActive, timeLeft]);
+                if (timerOn && seconds > 0) {
+                    const id = setInterval(() => setSeconds(s => s-1), 1000);
+                    return () => clearInterval(id);
+                } else if (seconds===0) setTimerOn(false);
+            }, [timerOn, seconds]);
 
-            const formatTime = (seconds) => `${Math.floor(seconds / 60).toString().padStart(2, '0')}:${(seconds % 60).toString().padStart(2, '0')}`;
-            const adjustTime = (minutes) => { setTimeLeft(prev => { const newTime = prev + minutes * 60; return newTime > 0 ? newTime : 0; }); };
+            const fmt = s => `${Math.floor(s/60).toString().padStart(2,'0')}:${(s%60).toString().padStart(2,'0')}`;
 
-            const addTask = (e) => {
-                e.preventDefault(); if (!inputValue.trim()) return;
-                const newTask = { id: Date.now(), text: inputValue, urgent: false, important: false, completed: false, subtasks: [] };
-                setTasks([newTask, ...tasks]); setInputValue('');
+            const addTask = e => { e.preventDefault(); if(!input.trim())return;
+                setTasks([{id:Date.now(),text:input.trim(),urgent:false,important:false,completed:false,subtasks:[]}, ...tasks]);
+                setInput('');
             };
 
-            const updateTask = (id, newText) => setTasks(prev => prev.map(t => t.id === id ? { ...t, text: newText } : t));
-            const addSubtask = (parentId, text) => setTasks(prev => prev.map(t => t.id === parentId ? { ...t, subtasks: [...t.subtasks, { id: Date.now(), text: text, completed: false }] } : t));
-            const updateSubtask = (parentId, subtaskId, newText) => setTasks(prev => prev.map(t => t.id === parentId ? { ...t, subtasks: t.subtasks.map(st => st.id === subtaskId ? { ...st, text: newText } : st) } : t));
-            
-            const reorderSubtask = (parentId, draggedSubtaskId, targetSubtaskId, position) => {
-                setTasks(prev => prev.map(t => {
-                    if (t.id === parentId) {
-                        const subtasks = [...t.subtasks];
-                        const draggedIndex = subtasks.findIndex(st => st.id === draggedSubtaskId);
-                        let targetIndex = subtasks.findIndex(st => st.id === targetSubtaskId);
-                        if (draggedIndex === -1 || targetIndex === -1) return t;
-                        const [draggedItem] = subtasks.splice(draggedIndex, 1);
-                        if (draggedIndex < targetIndex) targetIndex -= 1;
-                        if (position === 'bottom') targetIndex += 1;
-                        subtasks.splice(targetIndex, 0, draggedItem);
-                        return { ...t, subtasks };
-                    }
-                    return t;
+            const toggle = (id, field) => setTasks(ts => ts.map(t=>t.id===id?{...t,[field]:!t[field]}:t));
+            const updateTask = (id, text) => setTasks(ts => ts.map(t=>t.id===id?{...t,text}:t));
+            const delTask = id => setTasks(ts => ts.filter(t=>t.id!==id));
+            const addSub = (pid, text) => setTasks(ts => ts.map(t=>t.id===pid?{...t,subtasks:[...t.subtasks,{id:Date.now(),text,completed:false}]}:t));
+            const toggleSub = (pid,sid) => setTasks(ts=>ts.map(t=>t.id===pid?{...t,subtasks:t.subtasks.map(s=>s.id===sid?{...s,completed:!s.completed}:s)}:t));
+            const updateSub = (pid,sid,text) => setTasks(ts=>ts.map(t=>t.id===pid?{...t,subtasks:t.subtasks.map(s=>s.id===sid?{...s,text}:s)}:t));
+            const delSub = (pid,sid) => setTasks(ts=>ts.map(t=>t.id===pid?{...t,subtasks:t.subtasks.filter(s=>s.id!==sid)}:t));
+
+            const reorderSub = (pid, dragId, targetId, pos) => {
+                setTasks(ts => ts.map(t => {
+                    if (t.id !== pid) return t;
+                    const subs = [...t.subtasks];
+                    const di = subs.findIndex(s=>s.id===dragId);
+                    let ti = subs.findIndex(s=>s.id===targetId);
+                    const [moved] = subs.splice(di,1);
+                    if (di < ti && pos==='bottom') ti++;
+                    if (pos==='bottom') ti++;
+                    subs.splice(ti,0,moved);
+                    return {...t, subtasks: subs};
                 }));
             };
 
-            const toggleTask = (id, field) => setTasks(prev => prev.map(t => t.id === id ? { ...t, [field]: !t[field] } : t));
-            const toggleSubtask = (parentId, subtaskId) => setTasks(prev => prev.map(t => t.id === parentId ? { ...t, subtasks: t.subtasks.map(st => st.id === subtaskId ? { ...st, completed: !st.completed } : st) } : t));
-            const deleteTask = (id) => setTasks(prev => prev.filter(t => t.id !== id));
-            const deleteSubtask = (parentId, subtaskId) => setTasks(prev => prev.map(t => t.id === parentId ? { ...t, subtasks: t.subtasks.filter(st => st.id !== subtaskId) } : t));
-
-            const onDragStart = (e, taskId, type) => {
-                e.dataTransfer.setData("type", type); e.dataTransfer.setData("taskId", taskId); e.dataTransfer.effectAllowed = "move";
-                setDraggedTaskId(taskId); setDraggedType(type); 
+            const onDragStart = (e, id, type) => {
+                e.dataTransfer.setData('type', type);
+                if(type==='task') e.dataTransfer.setData('taskId', id);
+                setDraggedId(id); setDragType(type);
             };
 
-            const onDragEnd = () => { 
-                setDraggedTaskId(null); 
-                setDraggedType(null); 
-                stopScroll(); // 드래그 끝나면 스크롤 정지
+            const onDropQuadrant = (e, u, i) => {
+                if (e.dataTransfer.getData('type')!=='task') return;
+                const id = parseInt(e.dataTransfer.getData('taskId'));
+                setTasks(ts => ts.map(t=>t.id===id?{...t,urgent:u,important:i}:t));
             };
 
-            const onDropQuadrant = (e, targetUrgent, targetImportant) => {
-                e.preventDefault(); onDragEnd();
-                const type = e.dataTransfer.getData("type"); if (type !== "task") return; 
-                const taskId = parseInt(e.dataTransfer.getData("taskId")); if (!taskId) return;
-                setTasks(prevTasks => prevTasks.map(t => t.id === taskId ? { ...t, urgent: targetUrgent, important: targetImportant } : t));
-            };
-
-            const onDropTask = (e, targetTask, position) => {
-                e.preventDefault(); e.stopPropagation(); onDragEnd();
-                const type = e.dataTransfer.getData("type"); if (type !== "task") return;
-                const draggedTaskId = parseInt(e.dataTransfer.getData("taskId")); if (!draggedTaskId || draggedTaskId === targetTask.id) return;
-                setTasks(prevTasks => {
-                    const draggedTaskIndex = prevTasks.findIndex(t => t.id === draggedTaskId);
-                    let targetTaskIndex = prevTasks.findIndex(t => t.id === targetTask.id);
-                    if (draggedTaskIndex < 0 || targetTaskIndex < 0) return prevTasks;
-                    const newTasks = [...prevTasks];
-                    const [draggedItem] = newTasks.splice(draggedTaskIndex, 1);
-                    draggedItem.urgent = targetTask.urgent; draggedItem.important = targetTask.important;
-                    if (draggedTaskIndex < targetTaskIndex) targetTaskIndex -= 1;
-                    if (position === 'bottom') targetTaskIndex += 1;
-                    newTasks.splice(targetTaskIndex, 0, draggedItem);
-                    return newTasks;
+            const onDropTask = (e, target, pos) => {
+                if (e.dataTransfer.getData('type')!=='task') return;
+                const dragId = parseInt(e.dataTransfer.getData('taskId'));
+                if (dragId===target.id) return;
+                setTasks(ts => {
+                    const list = [...ts];
+                    const di = list.findIndex(t=>t.id===dragId);
+                    const ti = list.findIndex(t=>t.id===target.id);
+                    const [moved] = list.splice(di,1);
+                    moved.urgent = target.urgent;
+                    moved.important = target.important;
+                    let insert = ti;
+                    if (di < ti && pos==='top') insert--;
+                    if (pos==='bottom') insert++;
+                    list.splice(insert,0,moved);
+                    return list;
                 });
-            };
-
-            // 메인 화면 드래그 핸들러
-            const onDragOver = (e) => {
-                e.preventDefault();
-                updateScroll(e, mainContainerRef.current);
             };
 
             const copyToNotion = () => {
-                const q1 = tasks.filter(t => t.urgent && t.important && !t.completed);
-                const q2 = tasks.filter(t => !t.urgent && t.important && !t.completed);
-                const q3 = tasks.filter(t => t.urgent && !t.important && !t.completed);
-                const q4 = tasks.filter(t => !t.urgent && !t.important && !t.completed);
-                
-                const formatTask = (t) => {
-                    let str = `- [${t.completed ? 'x' : ' '}] ${t.text}\n`;
-                    if (t.subtasks?.length) t.subtasks.forEach(st => { str += `    - [${st.completed ? 'x' : ' '}] ${st.text}\n`; });
-                    return str;
-                };
+                const q1 = tasks.filter(t=>t.urgent&&t.important&&!t.completed);
+                const q2 = tasks.filter(t=>!t.urgent&&t.important&&!t.completed);
+                const q3 = tasks.filter(t=>t.urgent&&!t.important&&!t.completed);
+                const q4 = tasks.filter(t=>!t.urgent&&!t.important&&!t.completed);
+                const done = tasks.filter(t=>t.completed);
 
-                let textToCopy = "# 오늘의 할 일\n\n";
-                if (q1.length) { textToCopy += "### 🚨 바로 진행건\n"; q1.forEach(t => textToCopy += formatTask(t)); textToCopy += "\n"; }
-                if (q2.length) { textToCopy += "### 📅 주요 업무\n"; q2.forEach(t => textToCopy += formatTask(t)); textToCopy += "\n"; }
-                if (q3.length) { textToCopy += "### 🤝 부차적 업무\n"; q3.forEach(t => textToCopy += formatTask(t)); textToCopy += "\n"; }
-                if (q4.length) { textToCopy += "### 📥 별로 안 중요함\n"; q4.forEach(t => textToCopy += formatTask(t)); textToCopy += "\n"; }
-                const completed = tasks.filter(t => t.completed);
-                if (completed.length) { textToCopy += "### ✅ 완료된 항목\n"; completed.forEach(t => textToCopy += formatTask(t)); }
+                const fmt = t => `- [${t.completed?'x':' '}] ${t.text}${t.subtasks?.length?'\n'+t.subtasks.map(s=>`  - [${s.completed?'x':' '}] ${s.text}`).join('\n'):''}`;
+                let text = "# 오늘의 할 일\n\n";
+                if(q1.length) text += `### 🚨 바로 진행건\n${q1.map(fmt).join('\n')}\n\n`;
+                if(q2.length) text += `### 📅 주요 업무\n${q2.map(fmt).join('\n')}\n\n`;
+                if(q3.length) text += `### 🤝 부차적 업무\n${q3.map(fmt).join('\n')}\n\n`;
+                if(q4.length) text += `### 📥 별로 안 중요함\n${q4.map(fmt).join('\n')}\n\n`;
+                if(done.length) text += `### ✅ 완료된 항목\n${done.map(fmt).join('\n')}`;
 
-                navigator.clipboard.writeText(textToCopy).then(() => {
-                    setIsCopied(true);
-                    setTimeout(() => setIsCopied(false), 2000); 
-                }).catch(() => {
-                    alert("복사 실패");
-                });
+                navigator.clipboard.writeText(text).then(()=> { setCopied(true); setTimeout(()=>setCopied(false),2000); });
             };
 
-            const urgentImportant = tasks.filter(t => t.urgent && t.important && !t.completed);
-            const notUrgentImportant = tasks.filter(t => !t.urgent && t.important && !t.completed);
-            const urgentNotImportant = tasks.filter(t => t.urgent && !t.important && !t.completed);
-            const notUrgentNotImportant = tasks.filter(t => !t.urgent && !t.important && !t.completed);
+            const filtered = tasks.filter(t => tab==='active'? !t.completed : tab==='completed'? t.completed : true);
 
             return (
-                <div className="min-h-screen bg-[#F5F5F7] font-sans text-gray-900 flex flex-col md:flex-row selection:bg-indigo-100 selection:text-indigo-900" onDragEnd={onDragEnd}>
-                    <aside className="w-full md:w-[280px] bg-white/80 backdrop-blur-xl border-r border-gray-200/60 flex flex-col z-20 md:sticky md:top-0 h-auto md:h-screen">
-                        <div className="p-8 pb-6"><h1 className="text-xl font-bold tracking-tighter text-gray-900 flex items-center gap-2"><div className="w-7 h-7 bg-black rounded-lg flex items-center justify-center text-white"><CheckCircle2 className="w-4 h-4" /></div>FocusFlow</h1></div>
-                        <div className="px-6 mb-6">
-                            <div className="p-5 bg-white rounded-2xl border border-gray-100 shadow-[0_4px_20px_-12px_rgba(0,0,0,0.1)] flex flex-col items-center text-center group hover:border-indigo-100 transition-colors">
-                                <div className="text-[10px] font-bold tracking-widest text-gray-400 uppercase mb-3">Focus Timer</div>
-                                <div className="relative flex items-center justify-center mb-5 group/timer">
-                                    {!timerActive && <button onClick={() => adjustTime(-5)} className="absolute left-0 opacity-0 group-hover/timer:opacity-100 p-2 text-gray-300 hover:text-gray-600 transition-opacity"><Minus className="w-5 h-5" /></button>}
-                                    <div className={`text-4xl font-semibold tracking-tight font-mono tabular-nums cursor-default ${timerActive ? 'text-indigo-600' : 'text-gray-800'}`}>{formatTime(timeLeft)}</div>
-                                    {!timerActive && <button onClick={() => adjustTime(5)} className="absolute right-0 opacity-0 group-hover/timer:opacity-100 p-2 text-gray-300 hover:text-gray-600 transition-opacity"><Plus className="w-5 h-5" /></button>}
-                                </div>
-                                <div className="flex gap-2 w-full">
-                                    <button onClick={() => setTimerActive(!timerActive)} className={`flex-1 h-10 rounded-xl flex items-center justify-center gap-1.5 text-sm font-semibold transition-all ${timerActive ? 'bg-amber-400 text-white shadow-amber-200' : 'bg-black text-white shadow-lg shadow-gray-200 hover:bg-gray-800'}`}>{timerActive ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5 ml-0.5" />}</button>
-                                    <button onClick={() => { setTimerActive(false); setTimeLeft(25 * 60); }} className="w-10 h-10 rounded-xl bg-gray-50 text-gray-400 hover:text-gray-600 hover:bg-gray-100 flex items-center justify-center transition-colors"><RotateCcw className="w-4 h-4" /></button>
-                                </div>
+                <div className="min-h-screen flex flex-col md:flex-row bg-gradient-to-br from-gray-50 to-gray-100" onDragOver={e=>e.preventDefault()}>
+                    {/* Sidebar */}
+                    <aside className="w-full md:w-80 bg-white/90 backdrop-blur border-r border-gray-200 flex flex-col">
+                        <div className="p-8"><h1 className="text-2xl font-bold flex items-center gap-2"><div className="w-9 h-9 bg-black rounded-lg flex items-center justify-center text-white"><CheckCircle2 size={18}/></div>FocusFlow</h1></div>
+
+                        {/* 타이머 */}
+                        <div className="mx-6 mb-6 p-6 bg-white rounded-2xl shadow-lg border border-gray-100 text-center">
+                            <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">Focus Timer</p>
+                            <div className="relative inline-block group">
+                                <div className="text-5xl font-mono font-bold tabular-nums">{fmt(seconds)}</div>
+                                {!timerOn && <>
+                                    <button onClick={()=>setSeconds(s=>Math.max(60, s-300))} className="absolute left-0 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 p-2"><Minus size={20}/></button>
+                                    <button onClick={()=>setSeconds(s=>s+300)} className="absolute right-0 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 p-2"><Plus size={20}/></button>
+                                </>}
+                            </div>
+                            <div className="flex gap-3 mt-6">
+                                <button onClick={()=>setTimerOn(!timerOn)} className="flex-1 py-3 rounded-xl bg-black text-white font-bold flex items-center justify-center gap-2 hover:bg-gray-800 transition">
+                                    {timerOn ? <Pause size={18}/> : <Play size={18} className="ml-1"/>} {timerOn?'일시정지':'시작'}
+                                </button>
+                                <button onClick={()=>{setTimerOn(false);setSeconds(25*60);}} className="p-3 rounded-xl bg-gray-100 hover:bg-gray-200"><RotateCcw size={18}/></button>
                             </div>
                         </div>
-                        <div className="px-4 space-y-1 flex-1">
-                            <button onClick={() => setViewMode('matrix')} className={`w-full text-left px-4 py-3 rounded-xl flex items-center gap-3 text-sm font-medium transition-all ${viewMode === 'matrix' ? 'bg-gray-100 text-gray-900' : 'text-gray-500 hover:bg-gray-50 hover:text-gray-700'}`}><LayoutGrid className="w-4 h-4" /> 매트릭스 뷰</button>
-                            <button onClick={() => setViewMode('list')} className={`w-full text-left px-4 py-3 rounded-xl flex items-center gap-3 text-sm font-medium transition-all ${viewMode === 'list' ? 'bg-gray-100 text-gray-900' : 'text-gray-500 hover:bg-gray-50 hover:text-gray-700'}`}><ListIcon className="w-4 h-4" /> 리스트 뷰</button>
-                        </div>
-                        <div className="p-6 mt-auto space-y-2">
-                            <button 
-                                onClick={copyToNotion} 
-                                disabled={isCopied}
-                                className={`group w-full py-3 border rounded-xl text-sm font-semibold flex items-center justify-center gap-2 transition-all active:scale-[0.98] ${
-                                    isCopied 
-                                    ? "bg-green-50 border-green-200 text-green-600" 
-                                    : "bg-white border-gray-200 text-gray-600 hover:border-gray-300 hover:text-gray-900 hover:shadow-md"
-                                }`}
-                            >
-                                {isCopied ? (
-                                    <> <Check className="w-4 h-4" /> 복사 완료! </>
-                                ) : (
-                                    <> <Copy className="w-4 h-4 text-gray-400 group-hover:text-gray-900 transition-colors" /> 노션 복사 </>
-                                )}
+
+                        <nav className="px-6 space-y-2 flex-1">
+                            <button onClick={()=>setView('matrix')} className={`w-full flex items-center gap-3 px-5 py-4 rounded-xl font-medium transition ${view==='matrix'?'bg-gray-100 text-black':'text-gray-500 hover:bg-gray-50'}`}><LayoutGrid size={18}/> 매트릭스 뷰</button>
+                            <button onClick={()=>setView('list')} className={`w-full flex items-center gap-3 px-5 py-4 rounded-xl font-medium transition ${view==='list'?'bg-gray-100 text-black':'text-gray-500 hover:bg-gray-50'}`}><ListIcon size={18}/> 리스트 뷰</button>
+                        </nav>
+
+                        <div className="p-6">
+                            <button onClick={copyToNotion} className={`w-full py-4 rounded-xl font-bold flex items-center justify-center gap-2 transition ${copied?'bg-green-50 text-green-600 border-green-200':'bg-white border border-gray-300 hover:border-gray-400'}`}>
+                                {copied ? <><Check size={18}/> 복사 완료!</> : <><Copy size={18}/> 노션으로 복사</>}
                             </button>
                         </div>
                     </aside>
 
-                    <main className="flex-1 flex flex-col h-screen overflow-hidden relative">
-                        <div className="pt-8 pb-6 px-8 z-10 shrink-0">
-                            <form onSubmit={addTask} className="max-w-2xl mx-auto relative group">
-                                <div className="absolute inset-y-0 left-4 flex items-center pointer-events-none"><Plus className="w-5 h-5 text-gray-400" /></div>
-                                <input type="text" value={inputValue} onChange={(e) => setInputValue(e.target.value)} placeholder="새로운 할 일 입력..." className="w-full bg-white pl-12 pr-4 py-4 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.04)] border-0 outline-none text-gray-800 placeholder-gray-400 text-lg font-medium transition-shadow focus:shadow-[0_8px_30px_rgb(0,0,0,0.08)]" />
-                                <div className="absolute right-4 top-1/2 -translate-y-1/2 text-[10px] font-bold text-gray-300 border border-gray-100 bg-gray-50 px-1.5 py-0.5 rounded">ENTER</div>
+                    {/* Main */}
+                    <main className="flex-1 flex flex-col overflow-hidden">
+                        <div className="p-8">
+                            <form onSubmit={addTask} className="max-w-3xl mx-auto">
+                                <input value={input} onChange={e=>setInput(e.target.value)} placeholder="새로운 할 일 추가..."
+                                       className="w-full px-14 py-5 rounded-2xl bg-white shadow-lg text-lg font-medium placeholder-gray-400 focus:outline-none focus:shadow-xl transition-shadow"/>
+                                <Plus className="absolute left-8 top-6 text-gray-400" size={28}/>
                             </form>
                         </div>
 
-                        <div 
-                            ref={mainContainerRef}
-                            className="flex-1 overflow-y-auto px-4 md:px-8 pb-8 overscroll-contain"
-                            style={{ overflowAnchor: 'none' }} 
-                            onDragOver={onDragOver} 
-                        >
-                            {viewMode === 'matrix' ? (
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 h-full max-w-6xl mx-auto min-h-[600px]">
-                                    <Quadrant id="q1" title="바로 진행건" description="즉시 처리" tasks={urgentImportant} headerColor="bg-rose-500 text-rose-500" icon={AlertCircle} targetUrgent={true} targetImportant={true} toggleTask={toggleTask} deleteTask={deleteTask} updateTask={updateTask} toggleSubtask={toggleSubtask} deleteSubtask={deleteSubtask} updateSubtask={updateSubtask} addSubtask={addSubtask} reorderSubtask={reorderSubtask} addingSubtaskTo={addingSubtaskTo} setAddingSubtaskTo={setAddingSubtaskTo} onDragStart={onDragStart} onDragOver={onDragOver} onDropTask={onDropTask} onDropQuadrant={onDropQuadrant} draggedTaskId={draggedTaskId} draggedType={draggedType} updateScroll={updateScroll} />
-                                    <Quadrant id="q2" title="주요 업무" description="계획 수립" tasks={notUrgentImportant} headerColor="bg-blue-500 text-blue-500" icon={Star} targetUrgent={false} targetImportant={true} toggleTask={toggleTask} deleteTask={deleteTask} updateTask={updateTask} toggleSubtask={toggleSubtask} deleteSubtask={deleteSubtask} updateSubtask={updateSubtask} addSubtask={addSubtask} reorderSubtask={reorderSubtask} addingSubtaskTo={addingSubtaskTo} setAddingSubtaskTo={setAddingSubtaskTo} onDragStart={onDragStart} onDragOver={onDragOver} onDropTask={onDropTask} onDropQuadrant={onDropQuadrant} draggedTaskId={draggedTaskId} draggedType={draggedType} updateScroll={updateScroll} />
-                                    <Quadrant id="q3" title="부차적 업무" description="위임 가능" tasks={urgentNotImportant} headerColor="bg-amber-500 text-amber-500" icon={Clock} targetUrgent={true} targetImportant={false} toggleTask={toggleTask} deleteTask={deleteTask} updateTask={updateTask} toggleSubtask={toggleSubtask} deleteSubtask={deleteSubtask} updateSubtask={updateSubtask} addSubtask={addSubtask} reorderSubtask={reorderSubtask} addingSubtaskTo={addingSubtaskTo} setAddingSubtaskTo={setAddingSubtaskTo} onDragStart={onDragStart} onDragOver={onDragOver} onDropTask={onDropTask} onDropQuadrant={onDropQuadrant} draggedTaskId={draggedTaskId} draggedType={draggedType} updateScroll={updateScroll} />
-                                    <Quadrant id="q4" title="별로 안 중요함" description="보관함" tasks={notUrgentNotImportant} headerColor="bg-slate-500 text-slate-500" icon={ListIcon} targetUrgent={false} targetImportant={false} toggleTask={toggleTask} deleteTask={deleteTask} updateTask={updateTask} toggleSubtask={toggleSubtask} deleteSubtask={deleteSubtask} updateSubtask={updateSubtask} addSubtask={addSubtask} reorderSubtask={reorderSubtask} addingSubtaskTo={addingSubtaskTo} setAddingSubtaskTo={setAddingSubtaskTo} onDragStart={onDragStart} onDragOver={onDragOver} onDropTask={onDropTask} onDropQuadrant={onDropQuadrant} draggedTaskId={draggedTaskId} draggedType={draggedType} updateScroll={updateScroll} />
+                        <div className="flex-1 overflow-y-auto px-8 pb-8" onDragOver={e=>{e.preventDefault(); updateScroll(e, e.currentTarget);}}>
+                            {view === 'matrix' ? (
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-7xl mx-auto">
+                                    <Quadrant title="바로 진행건" icon={AlertCircle} color="bg-rose-500" tasks={tasks.filter(t=>t.urgent&&t.important&&!t.completed)} targetUrgent={true} targetImportant={true}
+                                        toggleTask={toggle} deleteTask={delTask} updateTask={updateTask} addSubtask={addSub} toggleSubtask={toggleSub} deleteSubtask={delSub} updateSubtask={updateSub}
+                                        reorderSubtask={reorderSub} addingSubtaskTo={addingSub} setAddingSubtaskTo={setAddingSub} onDragStart={onDragStart} onDropTask={onDropTask}
+                                        onDropQuadrant={onDropQuadrant} draggedTaskId={draggedId} draggedType={dragType}/>
+                                    <Quadrant title="주요 업무" icon={Star} color="bg-blue-500" tasks={tasks.filter(t=>!t.urgent&&t.important&&!t.completed)} targetUrgent={false} targetImportant={true} {...{toggleTask:toggle,deleteTask:delTask,updateTask,addSubtask:addSub,toggleSubtask:toggleSub,deleteSubtask:delSub,updateSubtask:updateSub,reorderSubtask:reorderSub,addingSubtaskTo:addingSub,setAddingSubtaskTo:setAddingSub,onDragStart,onDropTask,onDropQuadrant,draggedTaskId:draggedId,draggedType:dragType}}/>
+                                    <Quadrant title="부차적 업무" icon={Clock} color="bg-amber-500" tasks={tasks.filter(t=>t.urgent&&!t.important&&!t.completed)} targetUrgent={true} targetImportant={false} {...{toggleTask:toggle,deleteTask:delTask,updateTask,addSubtask:addSub,toggleSubtask:toggleSub,deleteSubtask:delSub,updateSubtask:updateSub,reorderSubtask:reorderSub,addingSubtaskTo:addingSub,setAddingSubtaskTo:setAddingSub,onDragStart,onDropTask,onDropQuadrant,draggedTaskId:draggedId,draggedType:dragType}}/>
+                                    <Quadrant title="별로 안 중요함" icon={ListIcon} color="bg-gray-500" tasks={tasks.filter(t=>!t.urgent&&!t.important&&!t.completed)} targetUrgent={false} targetImportant={false} {...{toggleTask:toggle,deleteTask:delTask,updateTask,addSubtask:addSub,toggleSubtask:toggleSub,deleteSubtask:delSub,updateSubtask:updateSub,reorderSubtask:reorderSub,addingSubtaskTo:addingSub,setAddingSubtaskTo:setAddingSub,onDragStart,onDropTask,onDropQuadrant,draggedTaskId:draggedId,draggedType:dragType}}/>
                                 </div>
                             ) : (
-                                <div className="max-w-3xl mx-auto bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden min-h-[500px]">
-                                    <div className="flex border-b border-gray-50 overflow-x-auto px-2">
-                                        {['all', 'active', 'completed'].map(tab => (
-                                            <button key={tab} onClick={() => setActiveTab(tab)} className={`px-6 py-5 text-sm font-bold transition-all whitespace-nowrap relative ${activeTab === tab ? 'text-gray-900' : 'text-gray-400 hover:text-gray-600'}`}>{tab === 'all' ? '전체' : tab === 'active' ? '진행중' : '완료됨'}{activeTab === tab && (<div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-1 h-1 bg-black rounded-full mb-2" />)}</button>
-                                        ))}
+                                <div className="max-w-4xl mx-auto bg-white rounded-3xl shadow-lg border border-gray-200 overflow-hidden">
+                                    <div className="flex border-b">
+                                        {['all','active','completed'].map(t=>
+                                            <button key={t} onClick={()=>setTab(t)} className={`flex-1 py-5 font-bold ${tab===t?'text-black':'text-gray-400'}`}>
+                                                {t==='all'?'전체':t==='active'?'진행중':'완료됨'}
+                                            </button>)}
                                     </div>
-                                    <div className="p-6 max-h-[70vh] overflow-y-auto custom-scrollbar">
-                                        {tasks.filter(t => { if (activeTab === 'active') return !t.completed; if (activeTab === 'completed') return t.completed; return true; }).map(t => (
-                                            <TaskItem key={t.id} task={t} toggleTask={toggleTask} deleteTask={deleteTask} updateTask={updateTask} toggleSubtask={toggleSubtask} deleteSubtask={deleteSubtask} updateSubtask={updateSubtask} addSubtask={addSubtask} reorderSubtask={reorderSubtask} addingSubtaskTo={addingSubtaskTo} setAddingSubtaskTo={setAddingSubtaskTo} onDragStart={onDragStart} onDragOver={onDragOver} onDropTask={onDropTask} isDraggingSource={draggedTaskId === t.id} draggedType={draggedType} />
-                                        ))}
-                                        {tasks.length === 0 && <div className="py-20 text-center"><div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-gray-50 mb-3"><ListIcon className="w-5 h-5 text-gray-300" /></div><p className="text-gray-400 text-sm">할 일이 없습니다.</p></div>}
+                                    <div className="p-6 space-y-3 max-h-[70vh] overflow-y-auto custom-scrollbar">
+                                        {filtered.length===0 ? <p className="text-center py-20 text-gray-400">할 일이 없습니다</p> :
+                                         filtered.map(t=><TaskItem key={t.id} task={t} toggleTask={toggle} deleteTask={delTask} updateTask={updateTask}
+                                            toggleSubtask={toggleSub} deleteSubtask={delSub} updateSubtask={updateSub} addSubtask={addSub}
+                                            reorderSubtask={reorderSub} addingSubtaskTo={addingSub} setAddingSubtaskTo={setAddingSub}
+                                            onDragStart={onDragStart} onDropTask={onDropTask} isDraggingSource={draggedId===t.id} draggedType={dragType}/>)}
                                     </div>
                                 </div>
                             )}
