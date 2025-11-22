@@ -209,7 +209,6 @@
             toggleTask, deleteTask, updateTask, toggleSubtask, deleteSubtask, updateSubtask, addSubtask, reorderSubtask,
             addingSubtaskTo, setAddingSubtaskTo, onDragStart, onDragOver, onDropTask, onDropQuadrant, draggedTaskId, draggedType 
         }) => {
-            // overflowAnchor: 'none' 추가로 내부 스크롤 튐 방지
             return (
                 <div onDragOver={onDragOver} onDrop={(e) => onDropQuadrant(e, targetUrgent, targetImportant)} className="flex flex-col h-full bg-white rounded-3xl shadow-[0_2px_12px_-4px_rgba(0,0,0,0.05)] border border-gray-100 overflow-hidden hover:shadow-md transition-shadow duration-300">
                     <div className="px-6 pt-6 pb-4">
@@ -254,8 +253,12 @@
             const [addingSubtaskTo, setAddingSubtaskTo] = useState(null);
             const [draggedTaskId, setDraggedTaskId] = useState(null);
             const [draggedType, setDraggedType] = useState(null);
-            
             const [isCopied, setIsCopied] = useState(false);
+
+            // 자동 스크롤을 위한 Refs
+            const scrollContainerRef = useRef(null);
+            const scrollSpeedRef = useRef(0);
+            const scrollFrameRef = useRef(null);
 
             useEffect(() => { localStorage.setItem('focusflow_tasks', JSON.stringify(tasks)); }, [tasks]);
 
@@ -306,17 +309,71 @@
                 setDraggedTaskId(taskId); setDraggedType(type); 
             };
 
-            const onDragEnd = () => { setDraggedTaskId(null); setDraggedType(null); };
+            // 드래그 종료 시 자동 스크롤 루프 정지
+            const onDragEnd = () => { 
+                setDraggedTaskId(null); 
+                setDraggedType(null);
+                stopAutoScroll(); 
+            };
+
+            const stopAutoScroll = () => {
+                if (scrollFrameRef.current) {
+                    cancelAnimationFrame(scrollFrameRef.current);
+                    scrollFrameRef.current = null;
+                }
+                scrollSpeedRef.current = 0;
+            };
+
+            // 메인 컨테이너에서 드래그 중일 때 자동 스크롤 처리
+            const handleDragOverContainer = (e) => {
+                e.preventDefault(); // 기본 동작 방지
+                
+                if (!scrollContainerRef.current) return;
+
+                const container = scrollContainerRef.current;
+                const { top, bottom, height } = container.getBoundingClientRect();
+                const mouseY = e.clientY;
+                const threshold = 100; // 상하단 감지 영역 크기 (px)
+                const maxSpeed = 15; // 최대 스크롤 속도
+
+                // 스크롤 속도 계산 (가장자리에 가까울수록 빨라짐)
+                if (mouseY < top + threshold) {
+                    // 위로 스크롤
+                    const intensity = (threshold - (mouseY - top)) / threshold;
+                    scrollSpeedRef.current = -maxSpeed * intensity;
+                } else if (mouseY > bottom - threshold) {
+                    // 아래로 스크롤
+                    const intensity = (threshold - (bottom - mouseY)) / threshold;
+                    scrollSpeedRef.current = maxSpeed * intensity;
+                } else {
+                    scrollSpeedRef.current = 0;
+                }
+
+                // 스크롤 루프가 실행 중이 아니고 속도가 0이 아니면 시작
+                if (!scrollFrameRef.current && scrollSpeedRef.current !== 0) {
+                    const scrollLoop = () => {
+                        if (scrollSpeedRef.current === 0) {
+                            stopAutoScroll();
+                            return;
+                        }
+                        if (container) {
+                            container.scrollTop += scrollSpeedRef.current;
+                        }
+                        scrollFrameRef.current = requestAnimationFrame(scrollLoop);
+                    };
+                    scrollLoop();
+                }
+            };
 
             const onDropQuadrant = (e, targetUrgent, targetImportant) => {
-                e.preventDefault(); setDraggedTaskId(null); setDraggedType(null);
+                e.preventDefault(); onDragEnd();
                 const type = e.dataTransfer.getData("type"); if (type !== "task") return; 
                 const taskId = parseInt(e.dataTransfer.getData("taskId")); if (!taskId) return;
                 setTasks(prevTasks => prevTasks.map(t => t.id === taskId ? { ...t, urgent: targetUrgent, important: targetImportant } : t));
             };
 
             const onDropTask = (e, targetTask, position) => {
-                e.preventDefault(); e.stopPropagation(); setDraggedTaskId(null); setDraggedType(null);
+                e.preventDefault(); e.stopPropagation(); onDragEnd();
                 const type = e.dataTransfer.getData("type"); if (type !== "task") return;
                 const draggedTaskId = parseInt(e.dataTransfer.getData("taskId")); if (!draggedTaskId || draggedTaskId === targetTask.id) return;
                 setTasks(prevTasks => {
@@ -332,9 +389,6 @@
                     return newTasks;
                 });
             };
-
-            // Grid gap 등 빈 공간에서도 드래그 이벤트를 처리하여 브라우저 기본 스크롤 동작 방지
-            const onDragOver = (e) => e.preventDefault();
 
             const copyToNotion = () => {
                 const q1 = tasks.filter(t => t.urgent && t.important && !t.completed);
@@ -420,10 +474,11 @@
                         </div>
 
                         <div 
-                            // 수정: overflowAnchor와 overscroll-contain 추가, onDragOver 핸들러 추가
+                            ref={scrollContainerRef} // 스크롤 컨테이너 Ref 연결
                             className="flex-1 overflow-y-auto px-4 md:px-8 pb-8 overscroll-contain"
                             style={{ overflowAnchor: 'none' }} 
-                            onDragOver={onDragOver} 
+                            onDragOver={handleDragOverContainer} // 커스텀 드래그 오버 핸들러 연결
+                            onDragLeave={stopAutoScroll} // 드래그가 영역을 벗어나면 스크롤 중지
                         >
                             {viewMode === 'matrix' ? (
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 h-full max-w-6xl mx-auto min-h-[600px]">
