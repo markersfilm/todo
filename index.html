@@ -32,7 +32,7 @@
         import { 
             CheckSquare, Square, Trash2, Copy, Plus, Clock, Play, Pause, RotateCcw, 
             LayoutGrid, List as ListIcon, AlertCircle, Star, CheckCircle2, GripVertical, 
-            CornerDownRight, X, Pencil, Minus
+            CornerDownRight, X, Pencil, Minus, Check // Check 아이콘 추가
         } from 'lucide-react';
 
         // --- Components ---
@@ -236,7 +236,6 @@
         });
 
         const FocusFlowApp = () => {
-            // ** 여기(localStorage)가 자동 저장 핵심입니다 **
             const [tasks, setTasks] = useState(() => {
                 const saved = localStorage.getItem('focusflow_tasks');
                 const parsed = saved ? JSON.parse(saved) : [];
@@ -251,8 +250,10 @@
             const [addingSubtaskTo, setAddingSubtaskTo] = useState(null);
             const [draggedTaskId, setDraggedTaskId] = useState(null);
             const [draggedType, setDraggedType] = useState(null);
+            
+            // 복사 버튼 피드백용 상태
+            const [isCopied, setIsCopied] = useState(false);
 
-            // ** tasks 상태가 변할 때마다 브라우저 저장소에 자동 저장 **
             useEffect(() => { localStorage.setItem('focusflow_tasks', JSON.stringify(tasks)); }, [tasks]);
 
             useEffect(() => {
@@ -351,7 +352,13 @@
                 const completed = tasks.filter(t => t.completed);
                 if (completed.length) { textToCopy += "### ✅ 완료된 항목\n"; completed.forEach(t => textToCopy += formatTask(t)); }
 
-                navigator.clipboard.writeText(textToCopy).then(() => alert("노션용 텍스트 복사 완료!")).catch(() => alert("복사 실패"));
+                // 팝업 제거 & 버튼 피드백 적용
+                navigator.clipboard.writeText(textToCopy).then(() => {
+                    setIsCopied(true);
+                    setTimeout(() => setIsCopied(false), 2000); // 2초 후 원래대로
+                }).catch(() => {
+                    alert("복사 실패");
+                });
             };
 
             const urgentImportant = tasks.filter(t => t.urgent && t.important && !t.completed);
@@ -382,7 +389,21 @@
                             <button onClick={() => setViewMode('list')} className={`w-full text-left px-4 py-3 rounded-xl flex items-center gap-3 text-sm font-medium transition-all ${viewMode === 'list' ? 'bg-gray-100 text-gray-900' : 'text-gray-500 hover:bg-gray-50 hover:text-gray-700'}`}><ListIcon className="w-4 h-4" /> 리스트 뷰</button>
                         </div>
                         <div className="p-6 mt-auto space-y-2">
-                            <button onClick={copyToNotion} className="group w-full py-3 bg-white border border-gray-200 text-gray-600 rounded-xl text-sm font-semibold flex items-center justify-center gap-2 hover:border-gray-300 hover:text-gray-900 hover:shadow-md transition-all active:scale-[0.98]"><Copy className="w-4 h-4 text-gray-400 group-hover:text-gray-900 transition-colors" /> 노션 복사</button>
+                            <button 
+                                onClick={copyToNotion} 
+                                disabled={isCopied}
+                                className={`group w-full py-3 border rounded-xl text-sm font-semibold flex items-center justify-center gap-2 transition-all active:scale-[0.98] ${
+                                    isCopied 
+                                    ? "bg-green-50 border-green-200 text-green-600" 
+                                    : "bg-white border-gray-200 text-gray-600 hover:border-gray-300 hover:text-gray-900 hover:shadow-md"
+                                }`}
+                            >
+                                {isCopied ? (
+                                    <> <Check className="w-4 h-4" /> 복사 완료! </>
+                                ) : (
+                                    <> <Copy className="w-4 h-4 text-gray-400 group-hover:text-gray-900 transition-colors" /> 노션 복사 </>
+                                )}
+                            </button>
                         </div>
                     </aside>
 
