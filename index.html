@@ -209,95 +209,9 @@
             toggleTask, deleteTask, updateTask, toggleSubtask, deleteSubtask, updateSubtask, addSubtask, reorderSubtask,
             addingSubtaskTo, setAddingSubtaskTo, onDragStart, onDragOver, onDropTask, onDropQuadrant, draggedTaskId, draggedType 
         }) => {
-            const scrollContainerRef = useRef(null);
-            const scrollSpeedRef = useRef(0);
-            const rafRef = useRef(null);
-
-            // 스크롤 루프 정지
-            const stopAutoScroll = () => {
-                if (rafRef.current) {
-                    cancelAnimationFrame(rafRef.current);
-                    rafRef.current = null;
-                }
-                scrollSpeedRef.current = 0;
-            };
-
-            // 부드러운 스크롤 루프 시작 (requestAnimationFrame 사용)
-            const startAutoScroll = () => {
-                if (rafRef.current) return; // 이미 실행 중이면 무시
-
-                const scrollLoop = () => {
-                    const container = scrollContainerRef.current;
-                    const speed = scrollSpeedRef.current;
-
-                    if (container && speed !== 0) {
-                        container.scrollTop += speed;
-                        rafRef.current = requestAnimationFrame(scrollLoop);
-                    } else {
-                        stopAutoScroll();
-                    }
-                };
-                scrollLoop();
-            };
-
-            const handleDragOverCapture = (e) => {
-                const container = scrollContainerRef.current;
-                if (!container) return;
-
-                const { top, bottom } = container.getBoundingClientRect();
-                const threshold = 120; // 감지 영역 (픽셀)
-                const maxSpeed = 12;   // 최대 속도 (픽셀/프레임)
-
-                const mouseY = e.clientY;
-
-                // 위쪽 영역 감지
-                if (mouseY < top + threshold) {
-                    // 위로 갈수록 빨라지게 (Ease-in 효과)
-                    const distance = Math.max(0, mouseY - top);
-                    const intensity = 1 - (distance / threshold); // 0~1 사이 값
-                    scrollSpeedRef.current = -maxSpeed * (intensity * intensity); // 제곱하여 부드러운 가속
-                    startAutoScroll();
-                } 
-                // 아래쪽 영역 감지
-                else if (mouseY > bottom - threshold) {
-                    // 아래로 갈수록 빨라지게
-                    const distance = Math.max(0, bottom - mouseY);
-                    const intensity = 1 - (distance / threshold);
-                    scrollSpeedRef.current = maxSpeed * (intensity * intensity);
-                    startAutoScroll();
-                } 
-                // 중간 영역 (스크롤 정지)
-                else {
-                    scrollSpeedRef.current = 0;
-                    // 여기서는 루프를 즉시 멈추지 않고 speed를 0으로 둬서 자연스럽게 멈추도록 함
-                }
-            };
-
-            // 드롭이나 영역 이탈 시 스크롤 완전 정지
-            const handleDropWrapper = (e) => {
-                stopAutoScroll();
-                onDropQuadrant(e, targetUrgent, targetImportant);
-            };
-
-            const handleDragLeave = (e) => {
-                // 컨테이너 자체를 벗어났을 때만 정지 (자식 요소 진입 시에는 계속 진행)
-                // 다만, DOM 이벤트 버블링 때문에 간단히 구현하기 위해 여기서 멈추기보다는
-                // DragOverCapture에서 speed를 0으로 만드는 로직에 의존하는 것이 더 안정적임.
-                // 안전장치로 컴포넌트 언마운트 시 정지
-            };
-
-            useEffect(() => {
-                return () => stopAutoScroll();
-            }, []);
-
             return (
-                <div 
-                    onDragOver={onDragOver} 
-                    onDragOverCapture={handleDragOverCapture}
-                    onDrop={handleDropWrapper}
-                    className="flex flex-col h-full bg-white rounded-3xl shadow-[0_2px_12px_-4px_rgba(0,0,0,0.05)] border border-gray-100 overflow-hidden hover:shadow-md transition-shadow duration-300"
-                >
-                    <div className="px-6 pt-6 pb-4 shrink-0">
+                <div onDragOver={onDragOver} onDrop={(e) => onDropQuadrant(e, targetUrgent, targetImportant)} className="flex flex-col h-full bg-white rounded-3xl shadow-[0_2px_12px_-4px_rgba(0,0,0,0.05)] border border-gray-100 overflow-hidden hover:shadow-md transition-shadow duration-300">
+                    <div className="px-6 pt-6 pb-4">
                         <div className="flex items-center justify-between mb-1">
                             <div className="flex items-center gap-2.5">
                                 <div className={`p-2 rounded-xl ${headerColor} bg-opacity-10`}><Icon className={`w-4 h-4 ${headerColor.replace('bg-', 'text-')}`} /></div>
@@ -306,7 +220,8 @@
                             <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-gray-50 text-gray-400">{tasks.length}</span>
                         </div>
                     </div>
-                    <div ref={scrollContainerRef} className="flex-1 overflow-y-auto custom-scrollbar px-4 pb-4 min-h-[100px] bg-gray-50/30">
+                    {/* 여기서 overflowAnchor: 'none' 스타일을 추가하여 스크롤 튐 방지 */}
+                    <div className="flex-1 overflow-y-auto custom-scrollbar px-4 pb-4 min-h-[100px] bg-gray-50/30" style={{ overflowAnchor: 'none' }}>
                         {tasks.length === 0 ? (
                             <div className="h-full flex flex-col items-center justify-center"><span className="text-gray-300 text-sm font-medium">비어있음</span></div>
                         ) : (
@@ -337,6 +252,7 @@
             const [draggedTaskId, setDraggedTaskId] = useState(null);
             const [draggedType, setDraggedType] = useState(null);
             
+            // 복사 버튼 피드백용 상태
             const [isCopied, setIsCopied] = useState(false);
 
             useEffect(() => { localStorage.setItem('focusflow_tasks', JSON.stringify(tasks)); }, [tasks]);
@@ -515,7 +431,7 @@
                                             <button key={tab} onClick={() => setActiveTab(tab)} className={`px-6 py-5 text-sm font-bold transition-all whitespace-nowrap relative ${activeTab === tab ? 'text-gray-900' : 'text-gray-400 hover:text-gray-600'}`}>{tab === 'all' ? '전체' : tab === 'active' ? '진행중' : '완료됨'}{activeTab === tab && (<div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-1 h-1 bg-black rounded-full mb-2" />)}</button>
                                         ))}
                                     </div>
-                                    <div className="p-6 max-h-[70vh] overflow-y-auto custom-scrollbar">
+                                    <div className="p-6 max-h-[70vh] overflow-y-auto custom-scrollbar" style={{ overflowAnchor: 'none' }}>
                                         {tasks.filter(t => { if (activeTab === 'active') return !t.completed; if (activeTab === 'completed') return t.completed; return true; }).map(t => (
                                             <TaskItem key={t.id} task={t} toggleTask={toggleTask} deleteTask={deleteTask} updateTask={updateTask} toggleSubtask={toggleSubtask} deleteSubtask={deleteSubtask} updateSubtask={updateSubtask} addSubtask={addSubtask} reorderSubtask={reorderSubtask} addingSubtaskTo={addingSubtaskTo} setAddingSubtaskTo={setAddingSubtaskTo} onDragStart={onDragStart} onDragOver={onDragOver} onDropTask={onDropTask} isDraggingSource={draggedTaskId === t.id} draggedType={draggedType} />
                                         ))}
