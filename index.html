@@ -27,7 +27,7 @@
     <div id="root"></div>
 
     <script type="text/babel" data-type="module">
-        import React, { useState, useEffect, useRef, memo } from 'react';
+        import React, { useState, useEffect, useRef, memo, useCallback } from 'react';
         import { createRoot } from 'react-dom/client';
         import { 
             CheckSquare, Square, Trash2, Copy, Plus, Clock, Play, Pause, RotateCcw, 
@@ -35,24 +35,57 @@
             CornerDownRight, X, Pencil, Minus, Check 
         } from 'lucide-react';
 
-        // --- Helper: 자동 스크롤 로직 ---
-        // 컨테이너의 가장자리에 마우스가 다가가면 스크롤을 이동시킵니다.
-        const handleAutoScroll = (e, container) => {
-            if (!container) return;
-            
-            const { top, bottom, height } = container.getBoundingClientRect();
-            const mouseY = e.clientY;
-            const threshold = 80; // 감지 범위 (px)
-            const speed = 10; // 스크롤 속도
+        // --- Hook: 부드러운 자동 스크롤 (가속도 + rAF 적용) ---
+        const useAutoScroll = (containerRef) => {
+            const frame = useRef(0);
+            const speed = useRef(0);
 
-            // 위쪽 감지
-            if (mouseY < top + threshold) {
-                container.scrollTop -= speed;
-            } 
-            // 아래쪽 감지
-            else if (mouseY > bottom - threshold) {
-                container.scrollTop += speed;
-            }
+            const handleDragOver = useCallback((e) => {
+                e.preventDefault(); // 기본 브라우저 스크롤 방지 (튀는 현상 막기 위해)
+                
+                if (!containerRef.current) return;
+
+                const { top, bottom, height } = containerRef.current.getBoundingClientRect();
+                const threshold = 100; // 감지 범위 (픽셀)
+                const maxSpeed = 25;   // 최대 스크롤 속도
+
+                // 마우스 위치에 따른 가속도 계산 (0.0 ~ 1.0)
+                if (e.clientY < top + threshold) {
+                    // 위쪽: 가장자리에 가까울수록 빠름
+                    const intensity = Math.max(0, (top + threshold - e.clientY) / threshold);
+                    // easeInQuad 느낌을 위해 intensity * intensity 사용 가능하지만 여기선 선형도 충분
+                    speed.current = -intensity * maxSpeed;
+                } else if (e.clientY > bottom - threshold) {
+                    // 아래쪽
+                    const intensity = Math.max(0, (e.clientY - (bottom - threshold)) / threshold);
+                    speed.current = intensity * maxSpeed;
+                } else {
+                    speed.current = 0;
+                }
+
+                // 애니메이션 루프 시작 (이미 돌고 있으면 무시)
+                if (speed.current !== 0 && !frame.current) {
+                    const tick = () => {
+                        if (speed.current === 0) {
+                            frame.current = 0;
+                            return;
+                        }
+                        if (containerRef.current) {
+                            containerRef.current.scrollTop += speed.current;
+                        }
+                        frame.current = requestAnimationFrame(tick);
+                    };
+                    frame.current = requestAnimationFrame(tick);
+                }
+            }, [containerRef]);
+
+            const stopScroll = useCallback(() => {
+                if (frame.current) cancelAnimationFrame(frame.current);
+                frame.current = 0;
+                speed.current = 0;
+            }, []);
+
+            return { handleDragOver, stopScroll };
         };
 
         // --- Components ---
@@ -105,8 +138,15 @@
                 }
             };
 
-            const handleDragOver = (e) => {
-                e.preventDefault(); e.stopPropagation();
+            const handleDragOverItem = (e) => {
+                // 아이템 위의 드래그 오버는 상위 컨테이너의 오토스크롤과 별개로 드롭 위치 표시만 담당
+                // 하지만 이벤트 버블링으로 상위 handleDragOver가 호출되어야 스크롤이 됨.
+                // e.stopPropagation()을 제거하거나, 여기서도 스크롤 로직을 호출해야 함.
+                // 가장 깔끔한 방법: 여기서 stopPropagation을 하지 않고, 상위 컨테이너(Quadrant)에서 스크롤 처리.
+                // 단, 드롭 위치 계산은 여기서 해야 함.
+                e.preventDefault(); 
+                // e.stopPropagation(); // 제거: 상위로 이벤트 전파하여 스크롤 작동하게 함
+
                 if (!itemRef.current || isDraggingSource || draggedType !== 'task') { setDropPosition(null); return; }
                 const rect = itemRef.current.getBoundingClientRect();
                 if (e.clientY < rect.top + rect.height / 2) setDropPosition('top');
@@ -135,7 +175,7 @@
                 <div 
                     ref={itemRef} draggable={!isEditing}
                     onDragStart={(e) => onDragStart(e, task.id, 'task')} 
-                    onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={handleDrop}
+                    onDragOver={handleDragOverItem} onDragLeave={handleDragLeave} onDrop={handleDrop}
                     className={`group relative flex flex-col p-4 rounded-xl mb-3 transition-all duration-200 border border-transparent ${
                         isDraggingSource ? 'opacity-40 bg-gray-100 border-dashed border-gray-300 scale-[0.98]' : 
                         task.completed ? 'bg-gray-50/50 opacity-60' : 'bg-white hover:shadow-md shadow-sm hover:border-gray-100'
@@ -197,7 +237,8 @@
             const handleKeyDown = (e) => { if (e.nativeEvent.isComposing) return; if (e.key === 'Enter') save(); if (e.key === 'Escape') { setText(subtask.text); setIsEditing(false); } };
             
             const handleDragOver = (e) => {
-                e.preventDefault(); e.stopPropagation();
+                e.preventDefault(); 
+                // e.stopPropagation(); // 제거: 상위 스크롤 작동 허용
                 if (!itemRef.current || draggedType !== 'subtask') { setDropPosition(null); return; }
                 const rect = itemRef.current.getBoundingClientRect();
                 if (e.clientY < rect.top + rect.height / 2) setDropPosition('top'); else setDropPosition('bottom');
@@ -227,18 +268,28 @@
         const Quadrant = memo(({ 
             id, title, description, tasks, headerColor, icon: Icon, targetUrgent, targetImportant,
             toggleTask, deleteTask, updateTask, toggleSubtask, deleteSubtask, updateSubtask, addSubtask, reorderSubtask,
-            addingSubtaskTo, setAddingSubtaskTo, onDragStart, onDragOver, onDropTask, onDropQuadrant, draggedTaskId, draggedType 
+            addingSubtaskTo, setAddingSubtaskTo, onDragStart, onDragOver, onDropTask, onDropQuadrant, draggedTaskId, draggedType,
+            notifyScrollStop // 추가: 스크롤 중지 알림
         }) => {
             const scrollRef = useRef(null);
+            
+            // Quadrant 전용 부드러운 스크롤 훅 사용
+            const { handleDragOver: handleScrollDragOver, stopScroll } = useAutoScroll(scrollRef);
 
-            // Quadrant 내부 스크롤 처리
-            const handleLocalDragOver = (e) => {
-                if (onDragOver) onDragOver(e); // 상위 dragOver 호출 (드롭 허용 위함)
-                handleAutoScroll(e, scrollRef.current); // 내부 리스트 자동 스크롤
+            // 외부(Drop)에서 스크롤 중지를 위해 useEffect 등으로 관리하거나 drop 핸들러에서 처리
+            // 여기서는 dragOver 이벤트 합치기
+            const handleCombinedDragOver = (e) => {
+                onDragOver(e); // 메인 로직
+                handleScrollDragOver(e); // 스크롤 로직
+            };
+
+            const handleDrop = (e) => {
+                stopScroll(); // 드롭 시 스크롤 즉시 중지
+                onDropQuadrant(e, targetUrgent, targetImportant);
             };
 
             return (
-                <div onDragOver={handleLocalDragOver} onDrop={(e) => onDropQuadrant(e, targetUrgent, targetImportant)} className="flex flex-col h-full bg-white rounded-3xl shadow-[0_2px_12px_-4px_rgba(0,0,0,0.05)] border border-gray-100 overflow-hidden hover:shadow-md transition-shadow duration-300">
+                <div onDragOver={handleCombinedDragOver} onDrop={handleDrop} onDragLeave={stopScroll} className="flex flex-col h-full bg-white rounded-3xl shadow-[0_2px_12px_-4px_rgba(0,0,0,0.05)] border border-gray-100 overflow-hidden hover:shadow-md transition-shadow duration-300">
                     <div className="px-6 pt-6 pb-4">
                         <div className="flex items-center justify-between mb-1">
                             <div className="flex items-center gap-2.5">
@@ -258,7 +309,7 @@
                         ) : (
                             <div className="pt-2">
                                 {tasks.map(t => (
-                                    <TaskItem key={t.id} task={t} toggleTask={toggleTask} deleteTask={deleteTask} updateTask={updateTask} toggleSubtask={toggleSubtask} deleteSubtask={deleteSubtask} updateSubtask={updateSubtask} addSubtask={addSubtask} reorderSubtask={reorderSubtask} addingSubtaskTo={addingSubtaskTo} setAddingSubtaskTo={setAddingSubtaskTo} onDragStart={onDragStart} onDragOver={onDragOver} onDropTask={onDropTask} isDraggingSource={draggedTaskId === t.id} draggedType={draggedType} />
+                                    <TaskItem key={t.id} task={t} toggleTask={toggleTask} deleteTask={deleteTask} updateTask={updateTask} toggleSubtask={toggleSubtask} deleteSubtask={deleteSubtask} updateSubtask={updateSubtask} addSubtask={addSubtask} reorderSubtask={reorderSubtask} addingSubtaskTo={addingSubtaskTo} setAddingSubtaskTo={setAddingSubtaskTo} onDragStart={onDragStart} onDragOver={onDragOver} onDropTask={(e, t, p) => { stopScroll(); onDropTask(e, t, p); }} isDraggingSource={draggedTaskId === t.id} draggedType={draggedType} />
                                 ))}
                             </div>
                         )}
@@ -284,8 +335,9 @@
             const [draggedType, setDraggedType] = useState(null);
             const [isCopied, setIsCopied] = useState(false);
             
-            // 메인 컨테이너 ref 추가
             const mainContainerRef = useRef(null);
+            // 메인 컨테이너용 부드러운 스크롤 훅
+            const { handleDragOver: handleMainScroll, stopScroll: stopMainScroll } = useAutoScroll(mainContainerRef);
 
             useEffect(() => { localStorage.setItem('focusflow_tasks', JSON.stringify(tasks)); }, [tasks]);
 
@@ -336,10 +388,15 @@
                 setDraggedTaskId(taskId); setDraggedType(type); 
             };
 
-            const onDragEnd = () => { setDraggedTaskId(null); setDraggedType(null); };
+            const onDragEnd = () => { 
+                setDraggedTaskId(null); 
+                setDraggedType(null); 
+                stopMainScroll(); // 드래그 종료 시 스크롤 멈춤
+            };
 
             const onDropQuadrant = (e, targetUrgent, targetImportant) => {
                 e.preventDefault(); setDraggedTaskId(null); setDraggedType(null);
+                stopMainScroll();
                 const type = e.dataTransfer.getData("type"); if (type !== "task") return; 
                 const taskId = parseInt(e.dataTransfer.getData("taskId")); if (!taskId) return;
                 setTasks(prevTasks => prevTasks.map(t => t.id === taskId ? { ...t, urgent: targetUrgent, important: targetImportant } : t));
@@ -347,6 +404,7 @@
 
             const onDropTask = (e, targetTask, position) => {
                 e.preventDefault(); e.stopPropagation(); setDraggedTaskId(null); setDraggedType(null);
+                stopMainScroll();
                 const type = e.dataTransfer.getData("type"); if (type !== "task") return;
                 const draggedTaskId = parseInt(e.dataTransfer.getData("taskId")); if (!draggedTaskId || draggedTaskId === targetTask.id) return;
                 setTasks(prevTasks => {
@@ -363,10 +421,11 @@
                 });
             };
 
-            // 메인 화면 스크롤 및 드롭 허용
+            // 메인 컨테이너 드래그 오버
             const onDragOver = (e) => {
-                e.preventDefault();
-                handleAutoScroll(e, mainContainerRef.current);
+                e.preventDefault(); 
+                // preventDefault는 놔두고 스크롤 훅을 호출
+                handleMainScroll(e);
             };
 
             const copyToNotion = () => {
@@ -457,6 +516,7 @@
                             className="flex-1 overflow-y-auto px-4 md:px-8 pb-8 overscroll-contain"
                             style={{ overflowAnchor: 'none' }} 
                             onDragOver={onDragOver} 
+                            onDragLeave={stopMainScroll}
                         >
                             {viewMode === 'matrix' ? (
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 h-full max-w-6xl mx-auto min-h-[600px]">
