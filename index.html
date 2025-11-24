@@ -41,29 +41,24 @@
             const speed = useRef(0);
 
             const handleDragOver = useCallback((e) => {
-                e.preventDefault(); // 기본 브라우저 스크롤 방지 (튀는 현상 막기 위해)
+                e.preventDefault();
                 
                 if (!containerRef.current) return;
 
                 const { top, bottom, height } = containerRef.current.getBoundingClientRect();
-                const threshold = 100; // 감지 범위 (픽셀)
-                const maxSpeed = 25;   // 최대 스크롤 속도
+                const threshold = 100;
+                const maxSpeed = 25;
 
-                // 마우스 위치에 따른 가속도 계산 (0.0 ~ 1.0)
                 if (e.clientY < top + threshold) {
-                    // 위쪽: 가장자리에 가까울수록 빠름
                     const intensity = Math.max(0, (top + threshold - e.clientY) / threshold);
-                    // easeInQuad 느낌을 위해 intensity * intensity 사용 가능하지만 여기선 선형도 충분
                     speed.current = -intensity * maxSpeed;
                 } else if (e.clientY > bottom - threshold) {
-                    // 아래쪽
                     const intensity = Math.max(0, (e.clientY - (bottom - threshold)) / threshold);
                     speed.current = intensity * maxSpeed;
                 } else {
                     speed.current = 0;
                 }
 
-                // 애니메이션 루프 시작 (이미 돌고 있으면 무시)
                 if (speed.current !== 0 && !frame.current) {
                     const tick = () => {
                         if (speed.current === 0) {
@@ -87,6 +82,35 @@
 
             return { handleDragOver, stopScroll };
         };
+
+        // --- Helper Component: 텍스트 내 URL 자동 링크 변환 ---
+        const TextRenderer = memo(({ text }) => {
+            // URL 정규식: http:// 또는 https:// 로 시작하고 공백 전까지의 문자열 감지
+            const urlRegex = /(https?:\/\/[^\s]+)/g;
+            const parts = text.split(urlRegex);
+
+            return (
+                <>
+                    {parts.map((part, index) => {
+                        if (part.match(urlRegex)) {
+                            return (
+                                <a 
+                                    key={index}
+                                    href={part}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-blue-600 hover:text-blue-800 hover:underline z-20 relative font-normal break-all"
+                                    onClick={(e) => e.stopPropagation()} // 클릭 시 부모(할일 토글/수정) 이벤트 방지
+                                >
+                                    {part}
+                                </a>
+                            );
+                        }
+                        return part;
+                    })}
+                </>
+            );
+        });
 
         // --- Components ---
 
@@ -139,14 +163,7 @@
             };
 
             const handleDragOverItem = (e) => {
-                // 아이템 위의 드래그 오버는 상위 컨테이너의 오토스크롤과 별개로 드롭 위치 표시만 담당
-                // 하지만 이벤트 버블링으로 상위 handleDragOver가 호출되어야 스크롤이 됨.
-                // e.stopPropagation()을 제거하거나, 여기서도 스크롤 로직을 호출해야 함.
-                // 가장 깔끔한 방법: 여기서 stopPropagation을 하지 않고, 상위 컨테이너(Quadrant)에서 스크롤 처리.
-                // 단, 드롭 위치 계산은 여기서 해야 함.
                 e.preventDefault(); 
-                // e.stopPropagation(); // 제거: 상위로 이벤트 전파하여 스크롤 작동하게 함
-
                 if (!itemRef.current || isDraggingSource || draggedType !== 'task') { setDropPosition(null); return; }
                 const rect = itemRef.current.getBoundingClientRect();
                 if (e.clientY < rect.top + rect.height / 2) setDropPosition('top');
@@ -195,7 +212,9 @@
                             {isEditing ? (
                                 <input ref={inputRef} type="text" value={editText} onChange={(e) => setEditText(e.target.value)} onBlur={saveEdit} onKeyDown={handleEditKeyDown} className={`w-full bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-100 text-gray-800 border-transparent ${commonTextStyle}`} />
                             ) : (
-                                <span onDoubleClick={startEditing} className={`block cursor-default border-transparent ${commonTextStyle} ${task.completed ? 'line-through text-gray-400' : 'text-gray-800'}`}>{task.text}</span>
+                                <span onDoubleClick={startEditing} className={`block cursor-default border-transparent ${commonTextStyle} ${task.completed ? 'line-through text-gray-400' : 'text-gray-800'}`}>
+                                    <TextRenderer text={task.text} />
+                                </span>
                             )}
                         </div>
                         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 pointer-events-auto">
@@ -238,7 +257,6 @@
             
             const handleDragOver = (e) => {
                 e.preventDefault(); 
-                // e.stopPropagation(); // 제거: 상위 스크롤 작동 허용
                 if (!itemRef.current || draggedType !== 'subtask') { setDropPosition(null); return; }
                 const rect = itemRef.current.getBoundingClientRect();
                 if (e.clientY < rect.top + rect.height / 2) setDropPosition('top'); else setDropPosition('bottom');
@@ -257,7 +275,9 @@
                         {isEditing ? (
                             <textarea ref={inputRef} value={text} onChange={e => setText(e.target.value)} onBlur={save} onKeyDown={handleKeyDown} rows={1} style={{ height: 'auto', minHeight: '24px' }} className="resize-none overflow-hidden text-sm focus:outline-none bg-transparent w-full block break-words whitespace-pre-wrap leading-relaxed" onInput={(e) => { e.target.style.height = 'auto'; e.target.style.height = e.target.scrollHeight + 'px'; }} />
                         ) : (
-                            <span onDoubleClick={() => setIsEditing(true)} className={`cursor-default border-transparent text-sm block break-words whitespace-pre-wrap leading-relaxed ${subtask.completed ? 'line-through text-gray-400' : 'text-gray-600'}`}>{subtask.text}</span>
+                            <span onDoubleClick={() => setIsEditing(true)} className={`cursor-default border-transparent text-sm block break-words whitespace-pre-wrap leading-relaxed ${subtask.completed ? 'line-through text-gray-400' : 'text-gray-600'}`}>
+                                <TextRenderer text={subtask.text} />
+                            </span>
                         )}
                     </div>
                     <button onClick={() => deleteSubtask(parentId, subtask.id)} className="opacity-0 group-hover/sub:opacity-100 text-gray-300 hover:text-red-400 ml-2 p-0.5 flex-shrink-0"><X className="w-3.5 h-3.5" /></button>
@@ -269,22 +289,19 @@
             id, title, description, tasks, headerColor, icon: Icon, targetUrgent, targetImportant,
             toggleTask, deleteTask, updateTask, toggleSubtask, deleteSubtask, updateSubtask, addSubtask, reorderSubtask,
             addingSubtaskTo, setAddingSubtaskTo, onDragStart, onDragOver, onDropTask, onDropQuadrant, draggedTaskId, draggedType,
-            notifyScrollStop // 추가: 스크롤 중지 알림
+            notifyScrollStop 
         }) => {
             const scrollRef = useRef(null);
             
-            // Quadrant 전용 부드러운 스크롤 훅 사용
             const { handleDragOver: handleScrollDragOver, stopScroll } = useAutoScroll(scrollRef);
 
-            // 외부(Drop)에서 스크롤 중지를 위해 useEffect 등으로 관리하거나 drop 핸들러에서 처리
-            // 여기서는 dragOver 이벤트 합치기
             const handleCombinedDragOver = (e) => {
-                onDragOver(e); // 메인 로직
-                handleScrollDragOver(e); // 스크롤 로직
+                onDragOver(e); 
+                handleScrollDragOver(e); 
             };
 
             const handleDrop = (e) => {
-                stopScroll(); // 드롭 시 스크롤 즉시 중지
+                stopScroll(); 
                 onDropQuadrant(e, targetUrgent, targetImportant);
             };
 
@@ -336,7 +353,6 @@
             const [isCopied, setIsCopied] = useState(false);
             
             const mainContainerRef = useRef(null);
-            // 메인 컨테이너용 부드러운 스크롤 훅
             const { handleDragOver: handleMainScroll, stopScroll: stopMainScroll } = useAutoScroll(mainContainerRef);
 
             useEffect(() => { localStorage.setItem('focusflow_tasks', JSON.stringify(tasks)); }, [tasks]);
@@ -391,7 +407,7 @@
             const onDragEnd = () => { 
                 setDraggedTaskId(null); 
                 setDraggedType(null); 
-                stopMainScroll(); // 드래그 종료 시 스크롤 멈춤
+                stopMainScroll(); 
             };
 
             const onDropQuadrant = (e, targetUrgent, targetImportant) => {
@@ -421,10 +437,8 @@
                 });
             };
 
-            // 메인 컨테이너 드래그 오버
             const onDragOver = (e) => {
                 e.preventDefault(); 
-                // preventDefault는 놔두고 스크롤 훅을 호출
                 handleMainScroll(e);
             };
 
